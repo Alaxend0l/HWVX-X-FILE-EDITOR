@@ -1,0 +1,9 @@
+[submodule "HWVX-GC-Decomp"]
+	path = HWVX-GC-Decomp
+	url = git@github.com:Alaxend0l/HWVX-GC-Decomp.git
+[submodule "HWVX-SDL"]
+	path = HWVX-SDL
+	url = git@github.com:Alaxend0l/HWVX-SDL.git
+[submodule "Pac-Kart-Documentation"]
+	path = Pac-Kart-Documentation
+	url = https://github.com/Pac-Kart/Pac-Kart-Documentation

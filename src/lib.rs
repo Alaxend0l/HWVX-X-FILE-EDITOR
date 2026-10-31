@@ -14,9 +14,12 @@
 //! command line, the tests and `verify` all share the same code.
 
 pub mod archive;
+pub mod blob;
+pub mod convert;
 pub mod format;
 pub mod hex;
 pub mod pack;
+pub mod roster;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};

@@ -71,6 +71,51 @@ enum Cmd {
         #[arg(short, long)]
         force: bool,
     },
+    /// Export the textures of an extracted pack folder as .tga images
+    Textures {
+        /// Extracted pack folder (contains pack.json and data.bin)
+        pack: PathBuf,
+        /// Output folder for the images
+        output: PathBuf,
+    },
+    /// Convert a PS2-prototype car pack and add it to an extracted GameCube
+    /// HW_Cars folder as a new car
+    PortCar {
+        /// Extracted prototype car pack folder (e.g. work/beta/HW_CARS/02_car_1)
+        beta: PathBuf,
+        /// Extracted GameCube HW_Cars folder to add the car to
+        #[arg(long)]
+        into: PathBuf,
+        /// Pack id for the new car (33, 34, 35 ... must be unused)
+        #[arg(long)]
+        id: u32,
+        /// GameCube car pack to take the HUD and cameras from (default: car 0
+        /// in the --into folder)
+        #[arg(long)]
+        donor: Option<PathBuf>,
+        /// Shared-pack reference map
+        #[arg(long, default_value = "data/beta-imports.json")]
+        imports: PathBuf,
+        /// Height the car is lifted by on interface screens (car select);
+        /// GameCube cars use 0.5 - 3.5
+        #[arg(long, default_value_t = 2.0)]
+        view_offset: f32,
+        /// Replace an existing car with the same id
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Add cars to the car-select screens of an extracted GameCube HW_IPack
+    /// folder: raise the carousel range and set the names
+    Roster {
+        /// Extracted HW_IPack folder
+        ipack: PathBuf,
+        /// Car id and name, e.g. --name '33=Fandango*' (a trailing * shows ™)
+        #[arg(long = "name", required = true)]
+        names: Vec<String>,
+        /// Text shown under a locked car
+        #[arg(long, default_value = " ")]
+        hint: String,
+    },
     /// Check that extract + pack reproduces archives byte for byte (in memory)
     Verify {
         #[arg(required = true)]
@@ -102,6 +147,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Extract { input, output, raw, platform, force } => cmd_extract(&input, output, raw, platform, force),
         Cmd::Pack { input, output, force } => cmd_pack(&input, output, force),
         Cmd::Verify { paths, platform } => cmd_verify(&paths, platform),
+        Cmd::Textures { pack, output } => cmd_textures(&pack, &output),
+        Cmd::Roster { ipack, names, hint } => cmd_roster(&ipack, &names, &hint),
+        Cmd::PortCar { beta, into, id, donor, imports, view_offset, force } => cmd_port_car(&beta, &into, id, donor, &imports, view_offset, force),
     }
 }
 
@@ -333,4 +381,168 @@ fn cmd_verify(paths: &[PathBuf], platform: Option<Platform>) -> Result<ExitCode>
     }
     out!("{ok} ok, {failed} failed, {raw} pack(s) could not be split");
     Ok(if failed == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+}
+
+/// Platform of an extracted pack folder, from its archive's manifest.json.
+fn pack_platform(pack: &Path) -> Result<Platform> {
+    let manifest = pack.parent().unwrap_or(Path::new(".")).join(MANIFEST_FILE);
+    let m = parse_manifest(&fs::read(&manifest).with_context(|| format!("reading {}", manifest.display()))?)?;
+    Ok(m.platform)
+}
+
+fn cmd_textures(pack: &Path, output: &Path) -> Result<ExitCode> {
+    use hwvx_xfile::convert::texture;
+    use hwvx_xfile::pack::{PackHeader, PackJson};
+    let platform = pack_platform(pack)?;
+    let json: PackJson = serde_json::from_slice(&fs::read(pack.join(hwvx_xfile::PACK_FILE))?)?;
+    let PackHeader::Standard(h) = json.header else {
+        bail!("geometry packs have no textures of their own");
+    };
+    let blob = fs::read(pack.join("data.bin")).unwrap_or_default();
+    let textures = texture::decode_pack_textures(platform, &blob, h.num_textures, h.texture_data_offset, h.palette_offset)?;
+    fs::create_dir_all(output)?;
+    for (i, (info, img)) in textures.iter().enumerate() {
+        let path = output.join(format!("tex{i:02}.tga"));
+        fs::write(&path, texture::tga(img))?;
+        out!("{}  {info}", path.display());
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn read_split(dir: &Path) -> Result<hwvx_xfile::pack::SplitPack> {
+    use hwvx_xfile::pack::{PackJson, SplitPack};
+    let json_path = dir.join(hwvx_xfile::PACK_FILE);
+    let json: PackJson = serde_json::from_slice(&fs::read(&json_path).with_context(|| format!("reading {}", json_path.display()))?)
+        .with_context(|| json_path.display().to_string())?;
+    let mut sections = std::collections::BTreeMap::new();
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == "bin") {
+            let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+            sections.insert(name, fs::read(&path)?);
+        }
+    }
+    Ok(SplitPack { json, sections })
+}
+
+fn write_split(dir: &Path, sp: &hwvx_xfile::pack::SplitPack) -> Result<()> {
+    if dir.exists() {
+        fs::remove_dir_all(dir)?;
+    }
+    fs::create_dir_all(dir)?;
+    fs::write(dir.join(hwvx_xfile::PACK_FILE), hwvx_xfile::json_bytes(&sp.json)?)?;
+    for (name, bytes) in &sp.sections {
+        fs::write(dir.join(format!("{name}.bin")), bytes)?;
+    }
+    Ok(())
+}
+
+fn cmd_port_car(beta: &Path, into: &Path, id: u32, donor: Option<PathBuf>, imports: &Path, view_offset: f32, force: bool) -> Result<ExitCode> {
+    use hwvx_xfile::convert::car;
+    use hwvx_xfile::format::PackType;
+    use hwvx_xfile::{Layout, ManifestEntry};
+
+    let beta_platform = pack_platform(beta)?;
+    if !beta_platform.is_beta() {
+        bail!("{} is a {beta_platform} pack; port-car converts PS2-prototype car packs", beta.display());
+    }
+    let manifest_path = into.join(MANIFEST_FILE);
+    let mut manifest = parse_manifest(&fs::read(&manifest_path).with_context(|| format!("reading {}", manifest_path.display()))?)?;
+    if manifest.platform != Platform::Gc {
+        bail!("{} is not an extracted GameCube archive", into.display());
+    }
+    let existing = manifest.entries.iter().position(|e| e.kind == PackType(0) && e.id == id);
+    if existing.is_some() && !force {
+        bail!("{} already has a car with id {id}; pass --force to replace it", into.display());
+    }
+    let donor_dir = match donor {
+        Some(d) => d,
+        None => into.join(
+            &manifest.entries.iter().find(|e| e.kind == PackType(0)).context("no GameCube car in the --into folder to use as donor")?.path,
+        ),
+    };
+    let donor_pack = read_split(&donor_dir)?;
+    let map = car::ImportMap::parse(&fs::read(imports).with_context(|| format!("reading {}", imports.display()))?)?;
+    let beta_pack = read_split(beta)?;
+    let (out, report) = car::convert(&beta_pack, &car::Options { new_id: id, donor: &donor_pack, imports: &map, view_offset: [0.0, view_offset, 0.0] })
+        .with_context(|| format!("converting {}", beta.display()))?;
+
+    let index = existing.unwrap_or(manifest.entries.len());
+    let folder = format!("{index:02}_car_{id}");
+    let old_path = existing.map(|i| manifest.entries[i].path.clone());
+    if let Some(p) = &old_path {
+        let old = into.join(p);
+        if old.is_dir() {
+            fs::remove_dir_all(&old)?;
+        } else if old.is_file() {
+            fs::remove_file(&old)?;
+        }
+    }
+    write_split(&into.join(&folder), &out)?;
+    let entry = ManifestEntry {
+        kind: PackType(0),
+        id,
+        sub_id: 0,
+        version: manifest.archive_version,
+        path: folder.clone(),
+        layout: Layout::Split,
+        summary: hwvx_xfile::pack::summary(&out),
+        gap_fill: Default::default(),
+    };
+    match existing {
+        Some(i) => manifest.entries[i] = entry,
+        None => manifest.entries.push(entry),
+    }
+    fs::write(&manifest_path, hwvx_xfile::json_bytes(&manifest)?)?;
+
+    out!("{} -> {} (car id {id}, donor {})", beta.display(), into.join(&folder).display(), donor_dir.display());
+    out!("  models: {}{}", report.models, if report.shadow { " (incl. shadow volume)" } else { "" });
+    out!("  textures: {}", report.textures.join(", "));
+    out!("  sounds: {}", report.sounds);
+    out!("  shared references remapped: {}", report.remapped);
+    for d in &report.dropped {
+        out!("  dropped (no GameCube counterpart): {d}");
+    }
+    for n in &report.notes {
+        out!("  note: {n}");
+    }
+    out!("now rebuild the archive: hwvx-x pack {} <output .xgc>", into.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_roster(ipack: &Path, names: &[String], hint: &str) -> Result<ExitCode> {
+    use hwvx_xfile::blob::Blob;
+    use hwvx_xfile::format::Endian;
+    let mut list = vec![];
+    for n in names {
+        let (id, name) = n.split_once('=').with_context(|| format!("--name {n:?}: expected ID=NAME"))?;
+        list.push((id.trim().parse::<u32>().with_context(|| format!("--name {n:?}: bad id"))?, name.to_string()));
+    }
+    let manifest = parse_manifest(&fs::read(ipack.join(MANIFEST_FILE)).with_context(|| format!("reading {}", ipack.join(MANIFEST_FILE).display()))?)?;
+    if manifest.platform != Platform::Gc {
+        bail!("{} is not an extracted GameCube archive", ipack.display());
+    }
+    let mut total = 0;
+    for e in &manifest.entries {
+        if e.layout != hwvx_xfile::Layout::Split || e.kind != hwvx_xfile::format::PackType(1) {
+            continue;
+        }
+        let dir = ipack.join(&e.path);
+        let mut sp = read_split(&dir)?;
+        let mut blob = Blob::from_split(Endian::Big, &sp);
+        let rep = hwvx_xfile::roster::patch(&mut blob, &list, hint).with_context(|| dir.display().to_string())?;
+        if rep.screens == 0 {
+            continue;
+        }
+        blob.validate(Endian::Big)?;
+        blob.store(Endian::Big, &mut sp);
+        sp.describe(Platform::Gc);
+        write_split(&dir, &sp)?;
+        total += rep.screens;
+        out!("{}: {} car-select screen(s), {} carousel range(s), {} name(s), {} hint(s)", e.path, rep.screens, rep.ranges, rep.names, rep.hints);
+    }
+    if total == 0 {
+        bail!("no car-select screens found in {}", ipack.display());
+    }
+    Ok(ExitCode::SUCCESS)
 }

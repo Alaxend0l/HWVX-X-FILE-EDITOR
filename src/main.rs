@@ -104,10 +104,10 @@ enum Cmd {
         #[arg(short, long)]
         force: bool,
     },
-    /// Add cars to the car-select screens of an extracted GameCube HW_IPack
-    /// folder: raise the carousel range and set the names
+    /// Add cars to the car lists of extracted GameCube archives (HW_IPack car
+    /// select: range, names, thumbnails; worlds: results-screen names)
     Roster {
-        /// Extracted HW_IPack folder
+        /// Extracted HW_IPack folder, world folder, or a tree of them
         ipack: PathBuf,
         /// Car id and name, e.g. --name '33=Fandango*' (a trailing * shows ™)
         #[arg(long = "name", required = true)]
@@ -115,6 +115,29 @@ enum Cmd {
         /// Text shown under a locked car
         #[arg(long, default_value = " ")]
         hint: String,
+        /// Extracted GameCube HW_Cars folder: render a thumbnail of each
+        /// named car from its pack
+        #[arg(long)]
+        cars: Option<PathBuf>,
+        /// Thumbnail image for a car, e.g. --thumb 33=fandango.tga (TGA,
+        /// any size; drawn upright, transparent background)
+        #[arg(long = "thumb")]
+        thumbs: Vec<String>,
+    },
+    /// Render a preview of a GameCube car pack (3/4 view, transparent background)
+    RenderCar {
+        /// Extracted GameCube car pack folder
+        pack: PathBuf,
+        /// Output image (.tga)
+        output: PathBuf,
+        #[arg(long, default_value_t = 256)]
+        size: usize,
+        /// Viewing angle around the car in degrees (0 = from the front)
+        #[arg(long, default_value_t = 35.0, allow_hyphen_values = true)]
+        yaw: f32,
+        /// Viewing angle above the car in degrees
+        #[arg(long, default_value_t = 25.0, allow_hyphen_values = true)]
+        pitch: f32,
     },
     /// Check that extract + pack reproduces archives byte for byte (in memory)
     Verify {
@@ -148,7 +171,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Pack { input, output, force } => cmd_pack(&input, output, force),
         Cmd::Verify { paths, platform } => cmd_verify(&paths, platform),
         Cmd::Textures { pack, output } => cmd_textures(&pack, &output),
-        Cmd::Roster { ipack, names, hint } => cmd_roster(&ipack, &names, &hint),
+        Cmd::RenderCar { pack, output, size, yaw, pitch } => cmd_render_car(&pack, &output, size, yaw, pitch),
+        Cmd::Roster { ipack, names, hint, cars, thumbs } => cmd_roster(&ipack, &names, &hint, cars.as_deref(), &thumbs),
         Cmd::PortCar { beta, into, id, donor, imports, view_offset, force } => cmd_port_car(&beta, &into, id, donor, &imports, view_offset, force),
     }
 }
@@ -402,7 +426,7 @@ fn cmd_textures(pack: &Path, output: &Path) -> Result<ExitCode> {
     let textures = texture::decode_pack_textures(platform, &blob, h.num_textures, h.texture_data_offset, h.palette_offset)?;
     fs::create_dir_all(output)?;
     for (i, (info, img)) in textures.iter().enumerate() {
-        let path = output.join(format!("tex{i:02}.tga"));
+        let path = output.join(format!("tex{i:03}.tga"));
         fs::write(&path, texture::tga(img))?;
         out!("{}  {info}", path.display());
     }
@@ -510,7 +534,7 @@ fn cmd_port_car(beta: &Path, into: &Path, id: u32, donor: Option<PathBuf>, impor
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_roster(ipack: &Path, names: &[String], hint: &str) -> Result<ExitCode> {
+fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, thumbs: &[String]) -> Result<ExitCode> {
     use hwvx_xfile::blob::Blob;
     use hwvx_xfile::format::Endian;
     let mut list = vec![];
@@ -518,31 +542,103 @@ fn cmd_roster(ipack: &Path, names: &[String], hint: &str) -> Result<ExitCode> {
         let (id, name) = n.split_once('=').with_context(|| format!("--name {n:?}: expected ID=NAME"))?;
         list.push((id.trim().parse::<u32>().with_context(|| format!("--name {n:?}: bad id"))?, name.to_string()));
     }
-    let manifest = parse_manifest(&fs::read(ipack.join(MANIFEST_FILE)).with_context(|| format!("reading {}", ipack.join(MANIFEST_FILE).display()))?)?;
-    if manifest.platform != Platform::Gc {
-        bail!("{} is not an extracted GameCube archive", ipack.display());
+    // thumbnails: explicit images first, else rendered from the car packs
+    let mut images = std::collections::BTreeMap::new();
+    for t in thumbs {
+        let (id, file) = t.split_once('=').with_context(|| format!("--thumb {t:?}: expected ID=FILE"))?;
+        let img = hwvx_xfile::convert::texture::read_tga(&fs::read(file).with_context(|| format!("reading {file}"))?)
+            .with_context(|| file.to_string())?;
+        images.insert(id.trim().parse::<u32>()?, img);
     }
-    let mut total = 0;
-    for e in &manifest.entries {
-        if e.layout != hwvx_xfile::Layout::Split || e.kind != hwvx_xfile::format::PackType(1) {
+    if let Some(cars) = cars {
+        let m = parse_manifest(&fs::read(cars.join(MANIFEST_FILE)).with_context(|| format!("reading {}", cars.join(MANIFEST_FILE).display()))?)?;
+        for (id, _) in &list {
+            if images.contains_key(id) {
+                continue;
+            }
+            let e = m.entries.iter().find(|e| e.kind == hwvx_xfile::format::PackType(0) && e.id == *id)
+                .with_context(|| format!("{} has no car with id {id}", cars.display()))?;
+            let (blob, tex) = load_gc_car(&cars.join(&e.path))?;
+            images.insert(*id, hwvx_xfile::render::render_car(&blob, &tex, 128, 35.0, 25.0)?);
+        }
+    }
+    // every extracted GameCube archive at or under `ipack` (HW_IPack, worlds)
+    let manifests = if ipack.join(MANIFEST_FILE).is_file() {
+        vec![ipack.join(MANIFEST_FILE)]
+    } else {
+        collect(&[ipack.to_path_buf()], |p| p.file_name().is_some_and(|n| n == MANIFEST_FILE))?
+    };
+    let mut changed = 0;
+    for mpath in manifests {
+        let root = mpath.parent().unwrap().to_path_buf();
+        let manifest = parse_manifest(&fs::read(&mpath)?)?;
+        if manifest.platform != Platform::Gc {
             continue;
         }
-        let dir = ipack.join(&e.path);
-        let mut sp = read_split(&dir)?;
-        let mut blob = Blob::from_split(Endian::Big, &sp);
-        let rep = hwvx_xfile::roster::patch(&mut blob, &list, hint).with_context(|| dir.display().to_string())?;
-        if rep.screens == 0 {
-            continue;
+        for e in &manifest.entries {
+            // interface packs, and worlds (their HUD / results screens list car names)
+            if e.layout != hwvx_xfile::Layout::Split || !matches!(e.kind.0, 1 | 4) {
+                continue;
+            }
+            let dir = root.join(&e.path);
+            let mut sp = read_split(&dir)?;
+            let mut blob = Blob::from_split(Endian::Big, &sp);
+            let rep = hwvx_xfile::roster::patch(&mut blob, &list, hint).with_context(|| dir.display().to_string())?;
+            let mut thumbs_set = 0;
+            if rep.screens > 0 {
+                if let hwvx_xfile::pack::PackHeader::Standard(h) = &sp.json.header {
+                    let tdo = h.texture_data_offset;
+                    for (id, img) in &images {
+                        // stored upside down, 128x128 like the game's own thumbnails
+                        let img = img.resized(128, 128).flipped();
+                        for idx in hwvx_xfile::roster::thumbnail_textures(&blob, *id) {
+                            hwvx_xfile::roster::replace_texture(&mut blob, tdo, idx, &img)?;
+                            thumbs_set += 1;
+                        }
+                    }
+                }
+            }
+            if rep.ranges + rep.names + rep.hints + thumbs_set == 0 {
+                continue;
+            }
+            blob.validate(Endian::Big)?;
+            blob.store(Endian::Big, &mut sp);
+            sp.describe(Platform::Gc);
+            write_split(&dir, &sp)?;
+            changed += 1;
+            out!(
+                "{}: {} car-select screen(s), {} range(s), {} name(s), {} hint(s), {} thumbnail(s)",
+                dir.strip_prefix(ipack).unwrap_or(&dir).display(),
+                rep.screens,
+                rep.ranges,
+                rep.names,
+                rep.hints,
+                thumbs_set
+            );
         }
-        blob.validate(Endian::Big)?;
-        blob.store(Endian::Big, &mut sp);
-        sp.describe(Platform::Gc);
-        write_split(&dir, &sp)?;
-        total += rep.screens;
-        out!("{}: {} car-select screen(s), {} carousel range(s), {} name(s), {} hint(s)", e.path, rep.screens, rep.ranges, rep.names, rep.hints);
     }
-    if total == 0 {
-        bail!("no car-select screens found in {}", ipack.display());
+    if changed == 0 {
+        bail!("no car lists found under {}", ipack.display());
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn load_gc_car(pack: &Path) -> Result<(hwvx_xfile::blob::Blob, Vec<hwvx_xfile::convert::texture::Image>)> {
+    use hwvx_xfile::pack::PackHeader;
+    let sp = read_split(pack)?;
+    let PackHeader::Standard(h) = &sp.json.header else { bail!("{} is not a car pack", pack.display()) };
+    let blob = hwvx_xfile::blob::Blob::from_split(hwvx_xfile::format::Endian::Big, &sp);
+    let tex = hwvx_xfile::render::pack_textures(&blob, h.num_textures, h.texture_data_offset)?;
+    Ok((blob, tex))
+}
+
+fn cmd_render_car(pack: &Path, output: &Path, size: usize, yaw: f32, pitch: f32) -> Result<ExitCode> {
+    if pack_platform(pack)? != Platform::Gc {
+        bail!("render-car draws GameCube car packs (convert prototype cars with port-car first)");
+    }
+    let (blob, tex) = load_gc_car(pack)?;
+    let img = hwvx_xfile::render::render_car(&blob, &tex, size, yaw, pitch)?;
+    fs::write(output, hwvx_xfile::convert::texture::tga(&img))?;
+    out!("{}", output.display());
     Ok(ExitCode::SUCCESS)
 }

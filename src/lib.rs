@@ -19,6 +19,7 @@ pub mod convert;
 pub mod format;
 pub mod hex;
 pub mod pack;
+pub mod render;
 pub mod roster;
 
 use anyhow::{bail, Context, Result};

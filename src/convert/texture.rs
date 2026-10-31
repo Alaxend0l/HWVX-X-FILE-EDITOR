@@ -550,3 +550,63 @@ pub fn decode_pack_textures(
     }
     Ok(out)
 }
+
+/// Read an uncompressed 24/32-bit TGA (as written by `tga` or most editors).
+pub fn read_tga(b: &[u8]) -> Result<Image> {
+    ensure!(b.len() >= 18, "not a TGA file");
+    let id_len = b[0] as usize;
+    ensure!(b[1] == 0 && b[2] == 2, "only uncompressed true-colour TGA files are supported");
+    let w = u16::from_le_bytes([b[12], b[13]]) as usize;
+    let h = u16::from_le_bytes([b[14], b[15]]) as usize;
+    let bpp = b[16] as usize / 8;
+    ensure!(bpp == 3 || bpp == 4, "TGA must be 24 or 32 bits per pixel");
+    let top_down = b[17] & 0x20 != 0;
+    let px = b.get(18 + id_len..18 + id_len + w * h * bpp).context("TGA pixel data is truncated")?;
+    let mut rgba = vec![0u8; w * h * 4];
+    for y in 0..h {
+        let sy = if top_down { y } else { h - 1 - y };
+        for x in 0..w {
+            let s = &px[(sy * w + x) * bpp..];
+            let d = (y * w + x) * 4;
+            rgba[d..d + 4].copy_from_slice(&[s[2], s[1], s[0], if bpp == 4 { s[3] } else { 255 }]);
+        }
+    }
+    Ok(Image { w, h, rgba })
+}
+
+impl Image {
+    /// Mirror top to bottom.
+    pub fn flipped(&self) -> Image {
+        let mut rgba = Vec::with_capacity(self.rgba.len());
+        for y in (0..self.h).rev() {
+            rgba.extend_from_slice(&self.rgba[y * self.w * 4..(y + 1) * self.w * 4]);
+        }
+        Image { w: self.w, h: self.h, rgba }
+    }
+
+    /// Box-filtered resize (for thumbnails).
+    pub fn resized(&self, w: usize, h: usize) -> Image {
+        let mut rgba = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            for x in 0..w {
+                let (x0, x1) = (x * self.w / w, ((x + 1) * self.w / w).max(x * self.w / w + 1));
+                let (y0, y1) = (y * self.h / h, ((y + 1) * self.h / h).max(y * self.h / h + 1));
+                let mut acc = [0u32; 4];
+                let mut n = 0;
+                for sy in y0..y1.min(self.h) {
+                    for sx in x0..x1.min(self.w) {
+                        let p = self.px(sx, sy);
+                        for k in 0..4 {
+                            acc[k] += p[k] as u32;
+                        }
+                        n += 1;
+                    }
+                }
+                for k in 0..4 {
+                    rgba.push((acc[k] / n.max(1)) as u8);
+                }
+            }
+        }
+        Image { w, h, rgba }
+    }
+}

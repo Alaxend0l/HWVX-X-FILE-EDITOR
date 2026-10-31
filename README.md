@@ -35,6 +35,19 @@ overwrite an existing file. Pass `--force` to override either. With `--force`,
 `extract` replaces only folders that contain an earlier extraction.
 `--raw` keeps each pack as one `.bin` instead of splitting it.
 
+### Car tools
+
+| Command | What it does |
+|---------|--------------|
+| `hwvx-x textures <pack folder> <out>` | Dump a pack's textures as TGA (GameCube or PS2-prototype packs) |
+| `hwvx-x port-car <prototype car pack> --into <GC HW_Cars folder> --id N` | Convert a PS2-prototype car into a GameCube car pack and add it as car `N` |
+| `hwvx-x roster <GC HW_IPack folder> --name 'N=Name*' --cars <GC HW_Cars folder>` | Add cars to the car-select screens (range, names, rendered thumbnails) |
+| `hwvx-x render-car <GC car pack> out.tga` | Textured preview render of a GameCube car |
+
+See [`docs/beta-cars/`](docs/beta-cars/README.md) for the full walkthrough
+(adding Fandango, Sweet 16 II and Jester from the PS2 prototype) and the
+format research behind it.
+
 ## Extracted layout
 
 ```

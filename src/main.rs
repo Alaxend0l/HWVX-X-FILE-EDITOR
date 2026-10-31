@@ -16,7 +16,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
 use hwvx_xfile::archive::Archive;
-use hwvx_xfile::format::{is_archive_path, Platform};
+use hwvx_xfile::format::{is_archive_path, Endian, Platform};
 use hwvx_xfile::{entry_stem, extract, pack, parse_manifest, verify, Layout, MANIFEST_FILE};
 
 #[derive(Parser)]
@@ -124,9 +124,9 @@ enum Cmd {
         #[arg(long = "thumb")]
         thumbs: Vec<String>,
     },
-    /// Render a preview of a GameCube car pack (3/4 view, transparent background)
+    /// Render a preview of a GameCube or PC car pack (3/4 view, transparent background)
     RenderCar {
-        /// Extracted GameCube car pack folder
+        /// Extracted GameCube or PC car pack folder
         pack: PathBuf,
         /// Output image (.tga)
         output: PathBuf,
@@ -138,6 +138,15 @@ enum Cmd {
         /// Viewing angle above the car in degrees
         #[arg(long, default_value_t = 25.0, allow_hyphen_values = true)]
         pitch: f32,
+    },
+    /// Patch the PC Hot Wheels.exe so added cars (ids 33-35) are unlocked
+    PatchExe {
+        /// Hot Wheels.exe to patch in place (a backup is written next to it
+        /// as "Hot Wheels.exe.orig" unless one exists)
+        exe: PathBuf,
+        /// Undo the patch instead
+        #[arg(long)]
+        revert: bool,
     },
     /// Check that extract + pack reproduces archives byte for byte (in memory)
     Verify {
@@ -171,6 +180,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Pack { input, output, force } => cmd_pack(&input, output, force),
         Cmd::Verify { paths, platform } => cmd_verify(&paths, platform),
         Cmd::Textures { pack, output } => cmd_textures(&pack, &output),
+        Cmd::PatchExe { exe, revert } => cmd_patch_exe(&exe, revert),
         Cmd::RenderCar { pack, output, size, yaw, pitch } => cmd_render_car(&pack, &output, size, yaw, pitch),
         Cmd::Roster { ipack, names, hint, cars, thumbs } => cmd_roster(&ipack, &names, &hint, cars.as_deref(), &thumbs),
         Cmd::PortCar { beta, into, id, donor, imports, view_offset, force } => cmd_port_car(&beta, &into, id, donor, &imports, view_offset, force),
@@ -472,8 +482,8 @@ fn cmd_port_car(beta: &Path, into: &Path, id: u32, donor: Option<PathBuf>, impor
     }
     let manifest_path = into.join(MANIFEST_FILE);
     let mut manifest = parse_manifest(&fs::read(&manifest_path).with_context(|| format!("reading {}", manifest_path.display()))?)?;
-    if manifest.platform != Platform::Gc {
-        bail!("{} is not an extracted GameCube archive", into.display());
+    if !matches!(manifest.platform, Platform::Gc | Platform::Pc) {
+        bail!("{} is not an extracted GameCube or PC archive", into.display());
     }
     let existing = manifest.entries.iter().position(|e| e.kind == PackType(0) && e.id == id);
     if existing.is_some() && !force {
@@ -488,7 +498,7 @@ fn cmd_port_car(beta: &Path, into: &Path, id: u32, donor: Option<PathBuf>, impor
     let donor_pack = read_split(&donor_dir)?;
     let map = car::ImportMap::parse(&fs::read(imports).with_context(|| format!("reading {}", imports.display()))?)?;
     let beta_pack = read_split(beta)?;
-    let (out, report) = car::convert(&beta_pack, &car::Options { new_id: id, donor: &donor_pack, imports: &map, view_offset: [0.0, view_offset, 0.0] })
+    let (out, report) = car::convert(&beta_pack, &car::Options { new_id: id, donor: &donor_pack, imports: &map, view_offset: [0.0, view_offset, 0.0], platform: manifest.platform })
         .with_context(|| format!("converting {}", beta.display()))?;
 
     let index = existing.unwrap_or(manifest.entries.len());
@@ -536,7 +546,7 @@ fn cmd_port_car(beta: &Path, into: &Path, id: u32, donor: Option<PathBuf>, impor
 
 fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, thumbs: &[String]) -> Result<ExitCode> {
     use hwvx_xfile::blob::Blob;
-    use hwvx_xfile::format::Endian;
+
     let mut list = vec![];
     for n in names {
         let (id, name) = n.split_once('=').with_context(|| format!("--name {n:?}: expected ID=NAME"))?;
@@ -558,8 +568,8 @@ fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, t
             }
             let e = m.entries.iter().find(|e| e.kind == hwvx_xfile::format::PackType(0) && e.id == *id)
                 .with_context(|| format!("{} has no car with id {id}", cars.display()))?;
-            let (blob, tex) = load_gc_car(&cars.join(&e.path))?;
-            images.insert(*id, hwvx_xfile::render::render_car(&blob, &tex, 128, 35.0, 25.0)?);
+            let (blob, en, tex) = load_car(&cars.join(&e.path))?;
+            images.insert(*id, hwvx_xfile::render::render_car(&blob, en, &tex, 128, 35.0, 25.0)?);
         }
     }
     // every extracted GameCube archive at or under `ipack` (HW_IPack, worlds)
@@ -572,9 +582,11 @@ fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, t
     for mpath in manifests {
         let root = mpath.parent().unwrap().to_path_buf();
         let manifest = parse_manifest(&fs::read(&mpath)?)?;
-        if manifest.platform != Platform::Gc {
-            continue;
-        }
+        let endian = match manifest.platform {
+            Platform::Gc => Endian::Big,
+            Platform::Pc => Endian::Little,
+            _ => continue, // PS2 builds are not targets
+        };
         for e in &manifest.entries {
             // interface packs, and worlds (their HUD / results screens list car names)
             if e.layout != hwvx_xfile::Layout::Split || !matches!(e.kind.0, 1 | 4) {
@@ -582,8 +594,8 @@ fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, t
             }
             let dir = root.join(&e.path);
             let mut sp = read_split(&dir)?;
-            let mut blob = Blob::from_split(Endian::Big, &sp);
-            let rep = hwvx_xfile::roster::patch(&mut blob, &list, hint).with_context(|| dir.display().to_string())?;
+            let mut blob = Blob::from_split(endian, &sp);
+            let rep = hwvx_xfile::roster::patch(&mut blob, endian, &list, hint).with_context(|| dir.display().to_string())?;
             let mut thumbs_set = 0;
             if rep.screens > 0 {
                 if let hwvx_xfile::pack::PackHeader::Standard(h) = &sp.json.header {
@@ -591,8 +603,12 @@ fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, t
                     for (id, img) in &images {
                         // stored upside down, 128x128 like the game's own thumbnails
                         let img = img.resized(128, 128).flipped();
-                        for idx in hwvx_xfile::roster::thumbnail_textures(&blob, *id) {
-                            hwvx_xfile::roster::replace_texture(&mut blob, tdo, idx, &img)?;
+                        for idx in hwvx_xfile::roster::thumbnail_textures(&blob, endian, *id) {
+                            if manifest.platform == Platform::Pc {
+                                hwvx_xfile::roster::replace_texture_pc(&mut blob, tdo, idx, &img)?;
+                            } else {
+                                hwvx_xfile::roster::replace_texture_gc(&mut blob, tdo, idx, &img)?;
+                            }
                             thumbs_set += 1;
                         }
                     }
@@ -601,9 +617,9 @@ fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, t
             if rep.ranges + rep.names + rep.hints + thumbs_set == 0 {
                 continue;
             }
-            blob.validate(Endian::Big)?;
-            blob.store(Endian::Big, &mut sp);
-            sp.describe(Platform::Gc);
+            blob.validate(endian)?;
+            blob.store(endian, &mut sp);
+            sp.describe(manifest.platform);
             write_split(&dir, &sp)?;
             changed += 1;
             out!(
@@ -623,22 +639,54 @@ fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, t
     Ok(ExitCode::SUCCESS)
 }
 
-fn load_gc_car(pack: &Path) -> Result<(hwvx_xfile::blob::Blob, Vec<hwvx_xfile::convert::texture::Image>)> {
+/// A GameCube or PC car pack folder: its object data, byte order and
+/// decoded textures (for rendering).
+fn load_car(pack: &Path) -> Result<(hwvx_xfile::blob::Blob, Endian, Vec<hwvx_xfile::convert::texture::Image>)> {
     use hwvx_xfile::pack::PackHeader;
+    let platform = pack_platform(pack)?;
+    if !matches!(platform, Platform::Gc | Platform::Pc) {
+        bail!("{} is a {platform} pack; render GameCube or PC car packs (convert prototype cars with port-car first)", pack.display());
+    }
     let sp = read_split(pack)?;
     let PackHeader::Standard(h) = &sp.json.header else { bail!("{} is not a car pack", pack.display()) };
-    let blob = hwvx_xfile::blob::Blob::from_split(hwvx_xfile::format::Endian::Big, &sp);
-    let tex = hwvx_xfile::render::pack_textures(&blob, h.num_textures, h.texture_data_offset)?;
-    Ok((blob, tex))
+    let e = platform.endian();
+    let blob = hwvx_xfile::blob::Blob::from_split(e, &sp);
+    let tex = hwvx_xfile::render::pack_textures(&blob, platform, h.num_textures, h.texture_data_offset)?;
+    Ok((blob, e, tex))
 }
 
 fn cmd_render_car(pack: &Path, output: &Path, size: usize, yaw: f32, pitch: f32) -> Result<ExitCode> {
-    if pack_platform(pack)? != Platform::Gc {
-        bail!("render-car draws GameCube car packs (convert prototype cars with port-car first)");
-    }
-    let (blob, tex) = load_gc_car(pack)?;
-    let img = hwvx_xfile::render::render_car(&blob, &tex, size, yaw, pitch)?;
+    let (blob, e, tex) = load_car(pack)?;
+    let img = hwvx_xfile::render::render_car(&blob, e, &tex, size, yaw, pitch)?;
     fs::write(output, hwvx_xfile::convert::texture::tga(&img))?;
     out!("{}", output.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_patch_exe(exe: &Path, revert: bool) -> Result<ExitCode> {
+    use hwvx_xfile::exepatch;
+    let mut bytes = fs::read(exe).with_context(|| format!("reading {}", exe.display()))?;
+    if revert {
+        exepatch::revert(&mut bytes)?;
+        fs::write(exe, &bytes)?;
+        out!("{}: patch removed", exe.display());
+        return Ok(ExitCode::SUCCESS);
+    }
+    if exepatch::state(&bytes)? == exepatch::State::Patched {
+        out!("{}: already patched", exe.display());
+        return Ok(ExitCode::SUCCESS);
+    }
+    let mut backup = exe.as_os_str().to_owned();
+    backup.push(".orig");
+    let backup = PathBuf::from(backup);
+    if !backup.exists() {
+        fs::write(&backup, &bytes).with_context(|| format!("writing {}", backup.display()))?;
+        out!("backup: {}", backup.display());
+    }
+    for what in exepatch::apply(&mut bytes)? {
+        out!("  {what}");
+    }
+    fs::write(exe, &bytes).with_context(|| format!("writing {}", exe.display()))?;
+    out!("{}: patched (cars 33-35 unlocked)", exe.display());
     Ok(ExitCode::SUCCESS)
 }

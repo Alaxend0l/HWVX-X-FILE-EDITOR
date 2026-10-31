@@ -20,7 +20,6 @@ use anyhow::{ensure, Result};
 use crate::blob::Blob;
 use crate::format::Endian;
 
-const BE: Endian = Endian::Big;
 const CAR_SELECT_ID: u16 = 2;
 
 #[derive(Default, Debug)]
@@ -34,15 +33,16 @@ pub struct RosterReport {
 
 struct Walk<'a> {
     b: &'a Blob,
+    e: Endian,
     seen: BTreeSet<u32>,
 }
 
 impl Walk<'_> {
     fn ptr(&self, slot: u32) -> Option<u32> {
-        self.b.ptr(BE, slot)
+        self.b.ptr(self.e, slot)
     }
     fn u32(&self, off: u32) -> u32 {
-        self.b.u32(BE, off).unwrap_or(0)
+        self.b.u32(self.e, off).unwrap_or(0)
     }
     fn byte(&self, off: u32) -> u8 {
         self.b.data.get(off as usize).copied().unwrap_or(0)
@@ -82,6 +82,14 @@ impl Walk<'_> {
     }
 }
 
+fn read16(e: Endian, b: &[u8], off: u32) -> u16 {
+    let x = [b[off as usize], b[off as usize + 1]];
+    match e {
+        Endian::Big => u16::from_be_bytes(x),
+        Endian::Little => u16::from_le_bytes(x),
+    }
+}
+
 fn cstr(b: &Blob, off: u32) -> String {
     let s = &b.data[off as usize..];
     let n = s.iter().position(|&c| c == 0).unwrap_or(s.len());
@@ -91,19 +99,19 @@ fn cstr(b: &Blob, off: u32) -> String {
 /// Patch one interface pack's blob (big-endian, GameCube).
 /// `names`: (car id, display name; a trailing `*` shows as ™).
 /// The carousel range is raised to the highest id given.
-pub fn patch(blob: &mut Blob, names: &[(u32, String)], hint: &str) -> Result<RosterReport> {
+pub fn patch(blob: &mut Blob, en: Endian, names: &[(u32, String)], hint: &str) -> Result<RosterReport> {
     let mut rep = RosterReport::default();
     let Some(&new_max) = names.iter().map(|(id, _)| id).max() else { return Ok(rep) };
-    let (walked, shaped) = all_headers(blob);
-    let half = |b: &Blob, o: u32| u16::from_be_bytes([b.data[o as usize], b.data[o as usize + 1]]);
+    let (walked, shaped) = all_headers(blob, en);
+    let half = |b: &Blob, o: u32| read16(en, &b.data, o);
 
     let mut slots_done = BTreeSet::new();
     for h in walked.iter().chain(shaped.iter()).copied() {
         // car-select screens live in the interface packs' header trees
         let car_select = walked.contains(&h) && half(blob, h) == CAR_SELECT_ID;
-        let vars = blob.ptr(BE, h + 0x1C).and_then(|v| {
-            let n = blob.u32(BE, v).unwrap_or(0).min(0x1000);
-            blob.ptr(BE, v + 4).map(|lst| (0..n).map(|i| lst + i * 0x34).collect::<Vec<u32>>())
+        let vars = blob.ptr(en, h + 0x1C).and_then(|v| {
+            let n = blob.u32(en, v).unwrap_or(0).min(0x1000);
+            blob.ptr(en, v + 4).map(|lst| (0..n).map(|i| lst + i * 0x34).collect::<Vec<u32>>())
         });
         if car_select {
             rep.screens += 1;
@@ -111,14 +119,14 @@ pub fn patch(blob: &mut Blob, names: &[(u32, String)], hint: &str) -> Result<Ros
             if let Some(vars) = &vars {
                 let car_max = vars
                     .iter()
-                    .filter(|&&e| blob.data[e as usize] == 0 && blob.u32(BE, e + 4) == Some(0))
-                    .filter_map(|&e| blob.u32(BE, e + 8))
+                    .filter(|&&e| blob.data[e as usize] == 0 && blob.u32(en, e + 4) == Some(0))
+                    .filter_map(|&e| blob.u32(en, e + 8))
                     .filter(|&m| (20..64).contains(&m))
                     .max();
                 if let Some(old) = car_max {
                     for &e in vars {
-                        if blob.data[e as usize] == 0 && blob.u32(BE, e + 4) == Some(0) && blob.u32(BE, e + 8) == Some(old) && old < new_max {
-                            blob.put_u32(BE, e + 8, new_max);
+                        if blob.data[e as usize] == 0 && blob.u32(en, e + 4) == Some(0) && blob.u32(en, e + 8) == Some(old) && old < new_max {
+                            blob.put_u32(en, e + 8, new_max);
                             rep.ranges += 1;
                         }
                     }
@@ -126,25 +134,25 @@ pub fn patch(blob: &mut Blob, names: &[(u32, String)], hint: &str) -> Result<Ros
             }
         }
         // per-car string lists (names everywhere; unlock hints on car select)
-        let n = blob.u32(BE, h + 0xC).unwrap_or(0).min(500);
-        let Some(objs) = blob.ptr(BE, h + 0x10) else { continue };
+        let n = blob.u32(en, h + 0xC).unwrap_or(0).min(500);
+        let Some(objs) = blob.ptr(en, h + 0x10) else { continue };
         for i in 0..n {
             let o = objs + i * 0x6C;
             if (o + 0x6C) as usize > blob.data.len() || !matches!(blob.data[o as usize + 1], 1 | 10 | 12) {
                 continue;
             }
-            let Some(sub) = blob.ptr(BE, o + 0x14) else { continue };
+            let Some(sub) = blob.ptr(en, o + 0x14) else { continue };
             if blob.data.get((sub + 0x10) as usize) != Some(&1) {
                 continue;
             }
-            let Some(lst) = blob.ptr(BE, sub + 8) else { continue };
-            let Some(texts) = blob.ptr(BE, lst + 4) else { continue };
-            let count = blob.u32(BE, lst).unwrap_or(0);
+            let Some(lst) = blob.ptr(en, sub + 8) else { continue };
+            let Some(texts) = blob.ptr(en, lst + 4) else { continue };
+            let count = blob.u32(en, lst).unwrap_or(0);
             if !(30..0x400).contains(&count) {
                 continue; // not a per-car list
             }
             let strings: Vec<String> = (0..count)
-                .map(|k| blob.ptr(BE, texts + 4 * k).and_then(|t| blob.ptr(BE, t)).map(|s| cstr(blob, s)).unwrap_or_default())
+                .map(|k| blob.ptr(en, texts + 4 * k).and_then(|t| blob.ptr(en, t)).map(|s| cstr(blob, s)).unwrap_or_default())
                 .collect();
             let is_names = strings.iter().all(|x| x.ends_with('*'));
             if !is_names && !car_select {
@@ -153,17 +161,17 @@ pub fn patch(blob: &mut Blob, names: &[(u32, String)], hint: &str) -> Result<Ros
             ensure!(count > new_max, "a car name list has only {count} entries; ids up to {new_max} need more");
             // The list is indexed by an interface variable (u16 at 0xA); if its
             // range stops at the old last car, raise it (results screens).
-            let var = u16::from_be_bytes([blob.data[(lst + 0xA) as usize], blob.data[(lst + 0xB) as usize]]) as usize;
+            let var = read16(en, &blob.data, lst + 0xA) as usize;
             if let Some(e) = vars.as_ref().and_then(|v| v.get(var)).copied() {
-                if let (Some(0), Some(max)) = (blob.u32(BE, e + 4), blob.u32(BE, e + 8)) {
+                if let (Some(0), Some(max)) = (blob.u32(en, e + 4), blob.u32(en, e + 8)) {
                     if (20..new_max).contains(&max) {
-                        blob.put_u32(BE, e + 8, new_max);
+                        blob.put_u32(en, e + 8, new_max);
                         rep.ranges += 1;
                     }
                 }
             }
             for (id, name) in names {
-                let Some(slot) = blob.ptr(BE, texts + 4 * id) else { continue };
+                let Some(slot) = blob.ptr(en, texts + 4 * id) else { continue };
                 if !slots_done.insert(slot) {
                     continue;
                 }
@@ -172,7 +180,7 @@ pub fn patch(blob: &mut Blob, names: &[(u32, String)], hint: &str) -> Result<Ros
                 let mut bytes = text.as_bytes().to_vec();
                 bytes.push(0);
                 let at = blob.append(&bytes, 4);
-                blob.set_ptr(BE, slot, at);
+                blob.set_ptr(en, slot, at);
                 if is_names {
                     rep.names += 1;
                 } else {
@@ -191,8 +199,8 @@ pub fn patch(blob: &mut Blob, names: &[(u32, String)], hint: &str) -> Result<Ros
 /// embed their HUD / results screens without a root table entry).
 /// Returns (headers reached from the root objects, other header-shaped
 /// objects).
-fn all_headers(blob: &Blob) -> (BTreeSet<u32>, BTreeSet<u32>) {
-    let mut w = Walk { b: blob, seen: BTreeSet::new() };
+fn all_headers(blob: &Blob, en: Endian) -> (BTreeSet<u32>, BTreeSet<u32>) {
+    let mut w = Walk { b: blob, e: en, seen: BTreeSet::new() };
     if let Some(table) = w.ptr(4) {
         for i in 0..w.u32(0).min(64) {
             let h = w.ptr(table + 8 * i);
@@ -202,13 +210,13 @@ fn all_headers(blob: &Blob) -> (BTreeSet<u32>, BTreeSet<u32>) {
     let walked = w.seen;
     let mut shaped = BTreeSet::new();
     let n = blob.data.len() as u32;
-    let targets: BTreeSet<u32> = blob.pointers.iter().filter_map(|&s| blob.u32(BE, s)).filter(|&t| t + 0x40 <= n).collect();
+    let targets: BTreeSet<u32> = blob.pointers.iter().filter_map(|&s| blob.u32(en, s)).filter(|&t| t + 0x40 <= n).collect();
     for h in targets {
-        let count = blob.u32(BE, h + 0xC).unwrap_or(0);
+        let count = blob.u32(en, h + 0xC).unwrap_or(0);
         if !(1..=500).contains(&count) || !blob.pointers.contains(&(h + 0x10)) {
             continue;
         }
-        let Some(objs) = blob.ptr(BE, h + 0x10) else { continue };
+        let Some(objs) = blob.ptr(en, h + 0x10) else { continue };
         if objs + count * 0x6C > n {
             continue;
         }
@@ -224,8 +232,8 @@ fn all_headers(blob: &Blob) -> (BTreeSet<u32>, BTreeSet<u32>) {
 /// Local texture indices a car-select screen shows as car `id`'s thumbnail:
 /// texture key animations (ObjSub type 3 -> { numKeys, keys, .., u8 0xC = 1
 /// "frame from variable" }) whose key `id` is a texture-reloc slot.
-pub fn thumbnail_textures(blob: &Blob, id: u32) -> BTreeSet<u32> {
-    let mut w = Walk { b: blob, seen: BTreeSet::new() };
+pub fn thumbnail_textures(blob: &Blob, en: Endian, id: u32) -> BTreeSet<u32> {
+    let mut w = Walk { b: blob, e: en, seen: BTreeSet::new() };
     if let Some(table) = w.ptr(4) {
         for i in 0..w.u32(0).min(64) {
             let h = w.ptr(table + 8 * i);
@@ -235,7 +243,7 @@ pub fn thumbnail_textures(blob: &Blob, id: u32) -> BTreeSet<u32> {
     let tex: std::collections::HashMap<u32, u32> = blob.texture_relocs.iter().map(|r| (r.slot, r.value)).collect();
     let mut out = BTreeSet::new();
     for &h in &w.seen {
-        if u16::from_be_bytes([blob.data[h as usize], blob.data[h as usize + 1]]) != CAR_SELECT_ID {
+        if read16(en, &blob.data, h) != CAR_SELECT_ID {
             continue;
         }
         let n = w.u32(h + 0xC).min(500);
@@ -267,7 +275,7 @@ pub fn thumbnail_textures(blob: &Blob, id: u32) -> BTreeSet<u32> {
 
 /// Replace texture `index` of a GameCube pack with `img` (stored as RGBA8,
 /// level 0; the new pixels are appended and the header re-pointed).
-pub fn replace_texture(blob: &mut Blob, texture_data_offset: u32, index: u32, img: &crate::convert::texture::Image) -> Result<()> {
+pub fn replace_texture_gc(blob: &mut Blob, texture_data_offset: u32, index: u32, img: &crate::convert::texture::Image) -> Result<()> {
     use crate::convert::texture as t;
     let hdr = texture_data_offset + index * t::GC_HEADER_SLOT as u32;
     ensure!((hdr as usize + 0x10) <= blob.data.len(), "texture {index} is outside the pack");
@@ -275,6 +283,21 @@ pub fn replace_texture(blob: &mut Blob, texture_data_offset: u32, index: u32, im
     let px = blob.append(&enc.pixels, 32);
     let h = enc.header(px);
     blob.data[hdr as usize..hdr as usize + 0x10].copy_from_slice(&h[..0x10]);
-    blob.set_ptr(BE, hdr + 8, px);
+    blob.set_ptr(Endian::Big, hdr + 8, px);
+    Ok(())
+}
+
+/// Replace texture `index` of a PC pack with `img` (DXT5 or DXT1 with a
+/// full mip chain, like the PC thumbnails; new pixels appended, the packed
+/// 0x10-byte header updated and re-pointed).
+pub fn replace_texture_pc(blob: &mut Blob, texture_data_offset: u32, index: u32, img: &crate::convert::texture::Image) -> Result<()> {
+    use crate::convert::texture as t;
+    let hdr = texture_data_offset + index * t::PC_HEADER_LEN as u32;
+    ensure!((hdr as usize + t::PC_HEADER_LEN) <= blob.data.len(), "texture {index} is outside the pack");
+    let enc = t::encode_pc(img, true)?;
+    let px = blob.append(&enc.pixels, 32);
+    let h = enc.header(px);
+    blob.data[hdr as usize..hdr as usize + t::PC_HEADER_LEN].copy_from_slice(&h);
+    blob.set_ptr(Endian::Little, hdr + 8, px);
     Ok(())
 }

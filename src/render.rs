@@ -9,7 +9,6 @@ use crate::blob::Blob;
 use crate::convert::texture::{self, Image};
 use crate::format::Endian;
 
-const BE: Endian = Endian::Big;
 
 type V3 = [f32; 3];
 
@@ -72,22 +71,22 @@ struct Tri {
     alpha: bool,
 }
 
-fn f32_at(b: &Blob, off: u32) -> f32 {
-    f32::from_bits(b.u32(BE, off).unwrap_or(0))
+fn f32_at(b: &Blob, e: Endian, off: u32) -> f32 {
+    f32::from_bits(b.u32(e, off).unwrap_or(0))
 }
 
 /// Rest-pose world transforms of a skeleton (pre-order, child counts).
-fn bone_transforms(b: &Blob, skel: u32) -> Vec<Xf> {
-    let n = b.u32(BE, skel).unwrap_or(0).min(256) as usize;
-    let Some(bones) = b.ptr(BE, skel + 0x10) else { return vec![] };
+fn bone_transforms(b: &Blob, e: Endian, skel: u32) -> Vec<Xf> {
+    let n = b.u32(e, skel).unwrap_or(0).min(256) as usize;
+    let Some(bones) = b.ptr(e, skel + 0x10) else { return vec![] };
     let mut out = Vec::with_capacity(n);
     // stack of (parent world transform, children left)
     let mut stack: Vec<(Xf, u8)> = vec![];
     for i in 0..n {
         let o = bones + 0x20 * i as u32;
         let local = Xf {
-            q: [f32_at(b, o), f32_at(b, o + 4), f32_at(b, o + 8), f32_at(b, o + 0xC)],
-            t: [f32_at(b, o + 0x10), f32_at(b, o + 0x14), f32_at(b, o + 0x18)],
+            q: [f32_at(b, e, o), f32_at(b, e, o + 4), f32_at(b, e, o + 8), f32_at(b, e, o + 0xC)],
+            t: [f32_at(b, e, o + 0x10), f32_at(b, e, o + 0x14), f32_at(b, e, o + 0x18)],
         };
         while matches!(stack.last(), Some((_, 0))) {
             stack.pop();
@@ -106,90 +105,114 @@ fn bone_transforms(b: &Blob, skel: u32) -> Vec<Xf> {
     out
 }
 
-/// Triangles of LOD 0 of a GameCube geometry, transformed by `xf`.
-fn geometry_tris(b: &Blob, g: u32, xf: &Xf, out: &mut Vec<Tri>) {
-    let half = |o: u32| u16::from_be_bytes([b.data[o as usize], b.data[o as usize + 1]]);
-    // half(g + 4) != 0: skinned geometry (extra matrix byte per vertex); skipped
-    if b.data.len() < (g + 0x40) as usize || half(g) != crate::convert::geometry::GC_MAGIC || half(g + 4) != 0 {
+fn rd16(e: Endian, b: &[u8], o: u32) -> u16 {
+    let x = [b[o as usize], b[o as usize + 1]];
+    if e == Endian::Big {
+        u16::from_be_bytes(x)
+    } else {
+        u16::from_le_bytes(x)
+    }
+}
+
+/// Triangles of LOD 0 of a GameCube or PC geometry, transformed by `xf`.
+fn geometry_tris(b: &Blob, e: Endian, g: u32, xf: &Xf, out: &mut Vec<Tri>) {
+    use crate::convert::geometry::{GC_MAGIC, PC_MAGIC};
+    let half = |o: u32| rd16(e, &b.data, o);
+    // half(g + 4) != 0: skinned geometry (not drawn by the preview)
+    if b.data.len() < (g + 0x40) as usize || half(g + 4) != 0 {
         return;
     }
-    let Some(lod) = b.ptr(BE, g + 8) else { return };
-    let (Some(groups), Some(vb)) = (b.ptr(BE, lod + 8), b.ptr(BE, lod + 0xC)) else { return };
+    let pc = match half(g) {
+        GC_MAGIC => false,
+        PC_MAGIC => true,
+        _ => return,
+    };
+    let Some(lod) = b.ptr(e, g + 8) else { return };
+    let (Some(groups), Some(vb)) = (b.ptr(e, lod + 8), b.ptr(e, lod + 0xC)) else { return };
     let ng = half(lod + 2) as u32;
-    let data = vb + 0x10;
-    let uv_off = b.u32(BE, vb).unwrap_or(0);
     let tex_slots: std::collections::HashMap<u32, u32> = b.texture_relocs.iter().map(|r| (r.slot, r.value)).collect();
+    // vertex fetch: (position index, uv index) -> position, uv
+    let (pos_at, pos_stride, uv_at) = if pc {
+        (b.u32(e, vb).unwrap_or(0), 16, b.u32(e, vb + 8).unwrap_or(0))
+    } else {
+        (vb + 0x10, 12, vb + 0x10 + b.u32(e, vb).unwrap_or(0))
+    };
     for k in 0..ng {
         let gr = groups + 0x20 * k;
         let flags = half(gr + 2);
         if flags & crate::convert::geometry::F_SHADOW != 0 {
             continue;
         }
-        let Some(dl) = b.ptr(BE, gr + 0x1C) else { continue };
-        if b.data.get(dl as usize) != Some(&0x90) {
-            continue;
-        }
-        let n = half(dl + 1) as u32;
+        let Some(dl) = b.ptr(e, gr + 0x1C) else { continue };
+        // (position, uv) index pairs of each vertex
+        let verts: Vec<(u32, u32)> = if pc {
+            let n = b.u32(e, gr + 0x10).unwrap_or(0) * 3;
+            (0..n).map(|v| {
+                let i = half(dl + 2 * v) as u32;
+                (i, i)
+            }).collect()
+        } else {
+            if b.data.get(dl as usize) != Some(&0x90) {
+                continue;
+            }
+            let n = half(dl + 1) as u32;
+            (0..n).map(|v| (half(dl + 3 + v * 6) as u32, half(dl + 3 + v * 6 + 4) as u32)).collect()
+        };
         let tex = tex_slots.get(&(gr + 0x18)).filter(|v| *v >> 16 == 0).map(|v| (*v & 0xFFFF) as usize);
         let colour = if flags & 2 != 0 { [170, 175, 185, 255] } else { [150, 150, 150, 255] };
         let alpha = flags & 1 != 0;
-        let mut i = 0;
-        while i + 3 <= n {
+        for t in verts.chunks_exact(3) {
             let mut p = [[0.0; 3]; 3];
             let mut uv = [[0.0; 2]; 3];
-            for (j, v) in (i..i + 3).enumerate() {
-                let at = dl + 3 + v * 6;
-                let pi = half(at) as u32;
-                let ti = half(at + 4) as u32;
-                let pp = data + pi * 12;
-                p[j] = xf.apply([f32_at(b, pp), f32_at(b, pp + 4), f32_at(b, pp + 8)]);
-                let tt = data + uv_off + ti * 8;
-                uv[j] = [f32_at(b, tt), f32_at(b, tt + 4)];
+            for (j, &(pi, ti)) in t.iter().enumerate() {
+                let pp = pos_at + pi * pos_stride;
+                p[j] = xf.apply([f32_at(b, e, pp), f32_at(b, e, pp + 4), f32_at(b, e, pp + 8)]);
+                let tt = uv_at + ti * 8;
+                uv[j] = [f32_at(b, e, tt), f32_at(b, e, tt + 4)];
             }
             out.push(Tri { p, uv, tex, colour, alpha });
-            i += 3;
         }
     }
 }
 
-/// Render the car of a GameCube car pack. `textures`: the pack's own
+/// Render the car of a GameCube or PC car pack. `textures`: the pack's own
 /// textures, decoded. Returns a `size`×`size` RGBA image (transparent
 /// background). `yaw`/`pitch` in degrees: 0/0 looks at the car's front.
-pub fn render_car(b: &Blob, textures: &[Image], size: usize, yaw: f32, pitch: f32) -> Result<Image> {
-    let car = b.ptr(BE, b.ptr(BE, 4).context("no root table")?).context("no car")?;
-    let model = b.ptr(BE, car + 0x78).context("car has no model")?;
-    let anim = b.ptr(BE, model + 0x10).context("car has no motion animation")?;
-    let bones = b.ptr(BE, anim + 0x14).map(|s| bone_transforms(b, s)).unwrap_or_default();
-    let parts = b.u32(BE, anim + 8).unwrap_or(0).min(0x400);
-    let list = b.u32(BE, anim + 0xC).context("no model parts")?;
+pub fn render_car(b: &Blob, e: Endian, textures: &[Image], size: usize, yaw: f32, pitch: f32) -> Result<Image> {
+    let car = b.ptr(e, b.ptr(e, 4).context("no root table")?).context("no car")?;
+    let model = b.ptr(e, car + 0x78).context("car has no model")?;
+    let anim = b.ptr(e, model + 0x10).context("car has no motion animation")?;
+    let bones = b.ptr(e, anim + 0x14).map(|s| bone_transforms(b, e, s)).unwrap_or_default();
+    let parts = b.u32(e, anim + 8).unwrap_or(0).min(0x400);
+    let list = b.u32(e, anim + 0xC).context("no model parts")?;
     let ident = Xf { q: [0.0, 0.0, 0.0, 1.0], t: [0.0; 3] };
     let mut tris = vec![];
     for i in 0..parts {
-        let e = list + 8 * i;
-        let g = b.u32(BE, e).unwrap_or(0);
-        let bone = u16::from_be_bytes([b.data[(e + 4) as usize], b.data[(e + 5) as usize]]) as usize;
-        geometry_tris(b, g, bones.get(bone).unwrap_or(&ident), &mut tris);
+        let en = list + 8 * i;
+        let g = b.u32(e, en).unwrap_or(0);
+        let bone = rd16(e, &b.data, en + 4) as usize;
+        geometry_tris(b, e, g, bones.get(bone).unwrap_or(&ident), &mut tris);
     }
     // Breakable body parts (CarPartList, CarA_DrawScript): undamaged ones
     // have flag bit 0 clear; `xform` shifts the part by its offset vector.
-    if let Some(list) = b.ptr(BE, anim + 0x38) {
-        let n = b.u32(BE, list).unwrap_or(0).min(0x100);
-        if let Some(parts) = b.ptr(BE, list + 4) {
+    if let Some(list) = b.ptr(e, anim + 0x38) {
+        let n = b.u32(e, list).unwrap_or(0).min(0x100);
+        if let Some(parts) = b.ptr(e, list + 4) {
             for i in 0..n {
                 let c = parts + 0x1C * i;
                 let (flags, xform) = (b.data[c as usize], b.data[c as usize + 1]);
                 if flags & 1 != 0 {
                     continue;
                 }
-                let bone = u16::from_be_bytes([b.data[(c + 4) as usize], b.data[(c + 5) as usize]]) as usize;
+                let bone = rd16(e, &b.data, c + 4) as usize;
                 let mut xf = *bones.get(bone).unwrap_or(&ident);
                 if xform != 0 {
-                    if let Some(o) = b.ptr(BE, c + 0xC) {
-                        xf.t = xf.apply([f32_at(b, o), f32_at(b, o + 4), f32_at(b, o + 8)]);
+                    if let Some(o) = b.ptr(e, c + 0xC) {
+                        xf.t = xf.apply([f32_at(b, e, o), f32_at(b, e, o + 4), f32_at(b, e, o + 8)]);
                     }
                 }
-                let g = b.u32(BE, c + 8).unwrap_or(0);
-                geometry_tris(b, g, &xf, &mut tris);
+                let g = b.u32(e, c + 8).unwrap_or(0);
+                geometry_tris(b, e, g, &xf, &mut tris);
             }
         }
     }
@@ -299,6 +322,6 @@ pub fn render_car(b: &Blob, textures: &[Image], size: usize, yaw: f32, pitch: f3
 }
 
 /// Decode a GameCube pack's own textures (level 0).
-pub fn pack_textures(b: &Blob, num: u32, offset: u32) -> Result<Vec<Image>> {
-    Ok(texture::decode_pack_textures(crate::format::Platform::Gc, &b.data, num, offset, 0)?.into_iter().map(|(_, i)| i).collect())
+pub fn pack_textures(b: &Blob, platform: crate::format::Platform, num: u32, offset: u32) -> Result<Vec<Image>> {
+    Ok(texture::decode_pack_textures(platform, &b.data, num, offset, 0)?.into_iter().map(|(_, i)| i).collect())
 }

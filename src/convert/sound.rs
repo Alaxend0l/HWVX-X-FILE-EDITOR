@@ -16,7 +16,7 @@
 
 use anyhow::{ensure, Context, Result};
 
-use crate::format::align;
+use crate::format::{align, Endian};
 
 pub const DESCRIPTOR_LEN: usize = 0x20;
 pub const ONE_SHOT: u32 = 0xFFFF_FFFF;
@@ -82,14 +82,27 @@ pub fn read_beta_sounds(region: &[u8], sfx_offset: usize, count: usize) -> Resul
 /// Build a GC sound region: descriptors then samples. Returns the region
 /// and the sound-pointer table (offsets of the descriptors' data fields).
 pub fn build_gc_region(sounds: &[Sound]) -> Result<(Vec<u8>, Vec<u32>)> {
+    build_region(sounds, Endian::Big, 32)
+}
+
+/// Build a PC sound region: the GameCube layout, little-endian, samples on
+/// 16-byte boundaries.
+pub fn build_pc_region(sounds: &[Sound]) -> Result<(Vec<u8>, Vec<u32>)> {
+    build_region(sounds, Endian::Little, 16)
+}
+
+fn build_region(sounds: &[Sound], e: Endian, sample_align: usize) -> Result<(Vec<u8>, Vec<u32>)> {
     let table = align(sounds.len() * DESCRIPTOR_LEN, 32);
     let mut region = vec![0u8; table];
     let mut pointers = Vec::with_capacity(sounds.len());
     for (i, s) in sounds.iter().enumerate() {
-        let at = align(region.len(), 32);
+        let at = align(region.len(), sample_align);
         region.resize(at, 0);
         for &v in &s.samples {
-            region.extend_from_slice(&v.to_be_bytes());
+            region.extend_from_slice(&match e {
+                Endian::Big => v.to_be_bytes(),
+                Endian::Little => v.to_le_bytes(),
+            });
         }
         let len = (s.samples.len() * 2) as u32;
         let lp = match s.loop_start {
@@ -100,12 +113,15 @@ pub fn build_gc_region(sounds: &[Sound]) -> Result<(Vec<u8>, Vec<u32>)> {
             }
         };
         let d = i * DESCRIPTOR_LEN;
-        region[d..d + 4].copy_from_slice(&(at as u32).to_be_bytes());
-        region[d + 4..d + 8].copy_from_slice(&len.to_be_bytes());
-        region[d + 8..d + 12].copy_from_slice(&lp.to_be_bytes());
-        region[d + 12..d + 16].copy_from_slice(&s.rate.to_be_bytes());
+        region[d..d + 4].copy_from_slice(&e.bytes(at as u32));
+        region[d + 4..d + 8].copy_from_slice(&e.bytes(len));
+        region[d + 8..d + 12].copy_from_slice(&e.bytes(lp));
+        region[d + 12..d + 16].copy_from_slice(&e.bytes(s.rate));
         region[d + 0x11] = 16;
-        region[d + 0x12..d + 0x14].copy_from_slice(&s.volume.to_be_bytes());
+        region[d + 0x12..d + 0x14].copy_from_slice(&match e {
+            Endian::Big => s.volume.to_be_bytes(),
+            Endian::Little => s.volume.to_le_bytes(),
+        });
         pointers.push(d as u32);
     }
     // Readable padding after the last sample (the DMA copies whole 32s).

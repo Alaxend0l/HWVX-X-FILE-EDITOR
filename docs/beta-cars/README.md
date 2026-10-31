@@ -45,6 +45,40 @@ $B pack work/gc_worlds HWVX-SDL/orig/files/worlds_      --force
 Then build HWVX-SDL (it needs the small `GameSettings.c` change described
 below) and run it with `--data HWVX-SDL/orig/files`.
 
+## Recipe for the PC version (`.xpc`)
+
+The same commands work on PC archives — `port-car`, `roster` and `pack` take
+the platform from the extracted archive. Keep a backup of your PC folder:
+the PC files are changed in place.
+
+```sh
+$B extract orig/pc/HW_Cars.xpc  work/pc_cars
+$B extract orig/pc/HW_IPack.xpc work/pc_ipack
+$B extract orig/pc/worlds_      work/pc_worlds
+
+$B port-car work/beta_cars/02_car_1  --into work/pc_cars --id 33   # Fandango
+$B port-car work/beta_cars/13_car_12 --into work/pc_cars --id 34   # Sweet 16 II
+$B port-car work/beta_cars/18_car_17 --into work/pc_cars --id 35   # Jester
+
+NAMES=(--name '33=Fandango*' --name '34=Sweet 16 II*' --name '35=Jester*')
+$B roster work/pc_ipack  "${NAMES[@]}" --cars work/pc_cars   # car select + thumbnails
+$B roster work/pc_worlds "${NAMES[@]}"                       # results screens
+
+$B pack work/pc_cars   orig/pc/HW_Cars.xpc  --force
+$B pack work/pc_ipack  orig/pc/HW_IPack.xpc --force
+$B pack work/pc_worlds orig/pc/worlds_      --force
+
+# the exe only knows 33 cars: unlock 33-35 (backup: "Hot Wheels.exe.orig";
+# --revert undoes it)
+$B patch-exe "orig/pc/Hot Wheels.exe"
+```
+
+What differs from GameCube is handled by the converter: models are written
+as OpenGL triangle lists over one vertex array per detail level, textures
+as DXT1/DXT5 with full mip chains at the prototype's brightness (GameCube
+stores textures darker), sounds as little-endian PCM16, and objects stay
+little-endian (no byte swap).
+
 Useful while working:
 
 * `hwvx-x render-car <car pack folder> out.tga [--yaw D --pitch D]` – a quick

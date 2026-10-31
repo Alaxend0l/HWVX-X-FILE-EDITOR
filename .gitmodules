@@ -7,3 +7,6 @@
 [submodule "Pac-Kart-Documentation"]
 	path = Pac-Kart-Documentation
 	url = https://github.com/Pac-Kart/Pac-Kart-Documentation
+[submodule "HWVX-PC-Decomp"]
+	path = HWVX-PC-Decomp
+	url = git@github.com:Alaxend0l/HWVX-PC-Decomp.git

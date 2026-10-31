@@ -24,6 +24,9 @@ const BE: Endian = Endian::Big;
 
 pub const BETA_MAGIC: u16 = 0x1005;
 pub const GC_MAGIC: u16 = 0x2003;
+pub const PC_MAGIC: u16 = 0x0002;
+/// PC: untextured group texture slot (u16 +0x18 = 0, u16 +0x1A = 0xFFFF).
+pub const PC_NO_TEXTURE: u32 = 0xFFFF_0000;
 pub const NO_TEXTURE: u32 = 0x0000_FFFF;
 
 /// Group flag bits (shared by both builds).
@@ -381,6 +384,7 @@ fn bits3(v: [f32; 3]) -> [u32; 3] {
 /// Writer for a new big-endian object blob with offsets from 0.
 struct Out {
     blob: Blob,
+    e: Endian,
 }
 
 impl Out {
@@ -395,17 +399,21 @@ impl Out {
         a
     }
     fn w32(&mut self, off: u32, v: u32) {
-        self.blob.put_u32(BE, off, v);
+        self.blob.put_u32(self.e, off, v);
     }
     fn w16(&mut self, off: u32, v: u16) {
         let o = off as usize;
-        self.blob.data[o..o + 2].copy_from_slice(&v.to_be_bytes());
+        let b = match self.e {
+            Endian::Big => v.to_be_bytes(),
+            Endian::Little => v.to_le_bytes(),
+        };
+        self.blob.data[o..o + 2].copy_from_slice(&b);
     }
     fn wf(&mut self, off: u32, v: f32) {
         self.w32(off, v.to_bits());
     }
     fn ptr(&mut self, slot: u32, target: u32) {
-        self.blob.set_ptr(BE, slot, target);
+        self.blob.set_ptr(self.e, slot, target);
     }
     fn push(&mut self, bytes: &[u8], alignment: usize) -> u32 {
         let a = self.at(alignment);
@@ -415,8 +423,9 @@ impl Out {
 }
 
 fn write_header(o: &mut Out, m: &Model, num_lods: u16) -> (u32, u32) {
-    let g = o.reserve(32, 0x40);
-    o.w16(g, GC_MAGIC);
+    let pc = o.e == Endian::Little;
+    let g = o.reserve(if pc { 16 } else { 32 }, 0x40);
+    o.w16(g, if pc { PC_MAGIC } else { GC_MAGIC });
     o.w16(g + 2, num_lods);
     o.w16(g + 4, m.kind as u16);
     for k in 0..3usize {
@@ -445,7 +454,7 @@ fn write_distances(o: &mut Out, g: u32, m: &Model) {
 /// relocation value into the GC one (or `None` to drop the texture).
 /// The result is a stand-alone blob (offsets from 0) to graft into a pack.
 pub fn build_gc(m: &Model, remap_texture: &mut dyn FnMut(u32) -> Option<u32>) -> Result<Blob> {
-    let mut o = Out { blob: Blob::default() };
+    let mut o = Out { blob: Blob::default(), e: BE };
     let (g, lods_at) = write_header(&mut o, m, m.lods.len() as u16);
     let mut dls: Vec<(u32, Vec<u8>)> = vec![];
 
@@ -552,6 +561,120 @@ pub fn build_gc(m: &Model, remap_texture: &mut dyn FnMut(u32) -> Option<u32>) ->
     Ok(o.blob)
 }
 
+/// Build a PC geometry (OpenGL): per LOD one shared vertex array (position,
+/// UV, normal, colour per vertex) and per group a u16 triangle list drawn with
+/// `glDrawElements(GL_TRIANGLES)`. Little-endian, 16-byte aligned.
+/// `remap_texture` as for [`build_gc`].
+pub fn build_pc(m: &Model, remap_texture: &mut dyn FnMut(u32) -> Option<u32>) -> Result<Blob> {
+    const LE: Endian = Endian::Little;
+    let mut o = Out { blob: Blob::default(), e: LE };
+    let (g, lods_at) = write_header(&mut o, m, m.lods.len() as u16);
+    const UP: [f32; 3] = [0.0, 1.0, 0.0];
+
+    for (l, lod) in m.lods.iter().enumerate() {
+        let lod_at = lods_at + 0x18 * l as u32;
+        let flags: Vec<u16> = lod.groups.iter().map(|gr| gc_flags(gr.flags)).collect();
+        let has_n = flags.iter().any(|&f| uses_normals(f));
+        let has_c = flags.iter().any(|&f| !uses_normals(f));
+        let class = match (has_n, has_c) {
+            (true, true) => F_VB_BOTH,
+            (true, false) => F_VB_NORMALS,
+            _ => F_VB_COLOURS,
+        };
+
+        // vertices: (pos, uv, normal, colour), shared by the LOD's groups,
+        // numbered in order of first use
+        let mut verts = Pool::<9>::new();
+        let mut lists: Vec<Vec<u16>> = vec![];
+        for (gr, &f) in lod.groups.iter().zip(&flags) {
+            let mut idx = Vec::with_capacity(gr.tris.len() * 3);
+            for t in &gr.tris {
+                for v in t {
+                    let (n, c) = if uses_normals(f) {
+                        (if let Attr::Normal(n) = v.attr { n } else { UP }, 0xFFFF_FFFFu32)
+                    } else {
+                        let c = if let Attr::Colour(c) = v.attr { u32::from_be_bytes(gc_colour(c)) } else { 0xFFFF_FFFF };
+                        (UP, c)
+                    };
+                    let n = if has_n { bits3(n) } else { [0; 3] };
+                    let c = if has_c { c } else { 0 };
+                    let p = bits3(v.pos);
+                    idx.push(verts.add([p[0], p[1], p[2], v.uv[0].to_bits(), v.uv[1].to_bits(), n[0], n[1], n[2], c])?);
+                }
+            }
+            lists.push(idx);
+        }
+        ensure!(verts.items.len() <= 0x8000, "a LOD has more than 32768 vertices (PC limit)");
+
+        let groups_at = o.reserve(16, 0x20 * lod.groups.len());
+        o.w16(lod_at + 2, lod.groups.len() as u16);
+        o.ptr(lod_at + 8, groups_at);
+        for (k, (gr, &f)) in lod.groups.iter().zip(&flags).enumerate() {
+            let at = groups_at + 0x20 * k as u32;
+            o.w16(at + 2, f | class);
+            o.blob.data[at as usize + 4..at as usize + 8].copy_from_slice(&gr.colour);
+            o.w32(at + 0x10, gr.tris.len() as u32);
+            o.w16(at + 0x14, gr.blend);
+            o.w16(at + 0x16, gr.sort);
+            let tex = if f & F_ENV != 0 { None } else { gr.texture.and_then(&mut *remap_texture) };
+            match tex {
+                Some(v) => {
+                    o.w32(at + 0x18, 0);
+                    o.blob.texture_relocs.push(Reloc { slot: at + 0x18, value: v });
+                }
+                None => o.w32(at + 0x18, PC_NO_TEXTURE),
+            }
+            let mut bytes = Vec::with_capacity(lists[k].len() * 2);
+            for i in &lists[k] {
+                bytes.extend_from_slice(&i.to_le_bytes());
+            }
+            let list = o.push(&bytes, 16);
+            o.ptr(at + 0x1C, list);
+        }
+
+        // vertex buffer: header {pos, col, uv, nrm, 16 zero bytes}, then the
+        // arrays pos (16-byte stride), uv (8), nrm (16), col (4), 16-aligned
+        let vb = o.reserve(16, 0x20);
+        let arr = |o: &mut Out, f: &dyn Fn(&[u32; 9]) -> Vec<u8>| -> u32 {
+            let mut b = vec![];
+            for v in &verts.items {
+                b.extend(f(v));
+            }
+            o.push(&b, 16)
+        };
+        let le3 = |a: &[u32]| -> Vec<u8> {
+            let mut b = vec![];
+            for x in a {
+                b.extend_from_slice(&x.to_le_bytes());
+            }
+            b.extend_from_slice(&[0; 4]);
+            b
+        };
+        let pos = arr(&mut o, &|v| le3(&v[0..3]));
+        let uv = arr(&mut o, &|v| [v[3].to_le_bytes(), v[4].to_le_bytes()].concat());
+        o.ptr(vb, pos);
+        o.ptr(vb + 8, uv);
+        if has_n {
+            let nrm = arr(&mut o, &|v| le3(&v[5..8]));
+            o.ptr(vb + 0xC, nrm);
+        }
+        if has_c {
+            let col = arr(&mut o, &|v| v[8].to_be_bytes().to_vec()); // bytes R,G,B,A
+            o.ptr(vb + 4, col);
+        }
+        o.ptr(lod_at + 0xC, vb);
+        if lod.names.len() > 1 {
+            let names = o.push(&lod.names, 4);
+            o.ptr(lod_at + 0x14, names);
+        } else {
+            o.ptr(lod_at + 0x14, lod_at);
+        }
+    }
+    write_distances(&mut o, g, m);
+    o.at(16);
+    Ok(o.blob)
+}
+
 fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
@@ -570,9 +693,22 @@ fn neg_face_normal(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
 /// Build a GameCube shadow volume from the prototype's shadow hull (a
 /// closed mesh): one edge record per edge shared by two non-coplanar faces.
 pub fn build_gc_shadow(m: &Model) -> Result<Blob> {
+    build_shadow(m, BE)
+}
+
+/// PC shadow volume: as GameCube (little-endian, 16-byte aligned), plus the
+/// edges that have only one adjacent face (second normal 0), colour 0 and
+/// no texture.
+pub fn build_pc_shadow(m: &Model) -> Result<Blob> {
+    build_shadow(m, Endian::Little)
+}
+
+fn build_shadow(m: &Model, e: Endian) -> Result<Blob> {
+    let pc = e == Endian::Little;
+    let al = if pc { 16 } else { 32 };
     ensure!(m.lods.len() == 1, "shadow hull has {} LODs, expected 1", m.lods.len());
     let lod = &m.lods[0];
-    let mut o = Out { blob: Blob::default() };
+    let mut o = Out { blob: Blob::default(), e };
     let (g, lod_at) = write_header(&mut o, m, 1);
 
     let mut pos = Pool::<3>::new();
@@ -594,25 +730,34 @@ pub fn build_gc_shadow(m: &Model) -> Result<Blob> {
             }
         }
         let mut bytes = vec![];
+        let f32b = |x: f32| if pc { x.to_le_bytes() } else { x.to_be_bytes() };
+        let u16b = |x: u16| if pc { x.to_le_bytes() } else { x.to_be_bytes() };
         for &(a, b) in &order {
-            let Some(&n1) = faces.get(&(b, a)) else { continue };
-            if a > b {
-                continue; // each undirected edge once
-            }
+            let n1 = match faces.get(&(b, a)) {
+                Some(&n1) => {
+                    if a > b {
+                        continue; // each shared edge once
+                    }
+                    n1
+                }
+                // open edge (one face): PC keeps these with a zero normal
+                None if pc => [0.0; 3],
+                None => continue,
+            };
             let n0 = faces[&(a, b)];
             let dot = n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2];
             if dot > 0.99999 {
                 continue; // coplanar: never a silhouette
             }
             for x in n0 {
-                bytes.extend_from_slice(&x.to_be_bytes());
+                bytes.extend_from_slice(&f32b(x));
             }
-            bytes.extend_from_slice(&a.to_be_bytes());
-            bytes.extend_from_slice(&b.to_be_bytes());
+            bytes.extend_from_slice(&u16b(a));
+            bytes.extend_from_slice(&u16b(b));
             for x in n1 {
-                bytes.extend_from_slice(&x.to_be_bytes());
+                bytes.extend_from_slice(&f32b(x));
             }
-            bytes.extend_from_slice(&0u32.to_be_bytes());
+            bytes.extend_from_slice(&[0u8; 4]);
         }
         edges_per_group.push(bytes);
     }
@@ -622,22 +767,30 @@ pub fn build_gc_shadow(m: &Model) -> Result<Blob> {
     o.ptr(lod_at + 8, groups_at);
     let mut pbytes = vec![];
     for p in &pos.items {
-        p.iter().for_each(|x| pbytes.extend_from_slice(&x.to_be_bytes()));
+        p.iter().for_each(|&x| pbytes.extend_from_slice(&o.e.bytes(x)));
     }
-    let positions = o.push(&pbytes, 32);
+    let positions = o.push(&pbytes, al);
     o.ptr(lod_at + 0xC, positions);
-    let names = o.push(&lod.names, 4);
-    o.ptr(lod_at + 0x14, names);
+    if pc {
+        o.ptr(lod_at + 0x14, lod_at); // PC: the empty name list is the LOD itself
+    } else {
+        let names = o.push(&lod.names, 4);
+        o.ptr(lod_at + 0x14, names);
+    }
+    let mut edge_at = vec![];
+    for edges in &edges_per_group {
+        edge_at.push(o.push(edges, al));
+    }
     write_distances(&mut o, g, m);
     for (k, edges) in edges_per_group.iter().enumerate() {
         let at = groups_at + 0x20 * k as u32;
         o.w16(at + 2, F_SHADOW);
-        o.blob.data[at as usize + 4..at as usize + 8].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0x00]);
+        let colour = if pc { [0, 0, 0, 0] } else { [0xFF, 0xFF, 0xFF, 0x00] };
+        o.blob.data[at as usize + 4..at as usize + 8].copy_from_slice(&colour);
         o.w32(at + 0x10, (edges.len() / 0x20) as u32);
-        let e = o.push(edges, 32);
-        o.ptr(at + 0x1C, e);
+        o.ptr(at + 0x1C, edge_at[k]);
     }
-    o.at(32);
+    o.at(al);
     Ok(o.blob)
 }
 

@@ -534,7 +534,15 @@ pub fn decode_pack_textures(
 ) -> Result<Vec<(String, Image)>> {
     let mut out = Vec::new();
     for i in 0..num_textures as usize {
-        if platform.is_beta() {
+        if platform == crate::format::Platform::Pc {
+            let o = texture_data_offset as usize + i * PC_HEADER_LEN;
+            let b = blob.get(o..o + PC_HEADER_LEN).context("texture header outside the blob")?;
+            let le = |k: usize| u16::from_le_bytes([b[k], b[k + 1]]);
+            let ptr = u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
+            let (f, w, h) = (le(0), le(2) as usize, le(4) as usize);
+            let img = decode_pc(f, w, h, blob.get(ptr..).context("texture pixels outside the blob")?)?;
+            out.push((format!("fmt{} {}x{} levels{}", f, w, h, le(6)), img));
+        } else if platform.is_beta() {
             let h = BetaTexHeader::read(blob, texture_data_offset as usize + i * BETA_HEADER_LEN)?;
             let img = decode_beta(blob, &h, palette_offset as usize)?;
             out.push((format!("fmt{} {}x{} mips{} pal{}", h.format, h.w, h.h, h.mips, h.palette), img));
@@ -608,5 +616,268 @@ impl Image {
             }
         }
         Image { w, h, rgba }
+    }
+}
+
+// ---- PC (DXT) ------------------------------------------------------------
+//
+// PC texture records are packed 0x10-byte headers at `texture_data_offset`
+// (little-endian): u16 format (4 = DXT1 without alpha, 5 = DXT5), u16 width,
+// u16 height, u16 levels (full chain down to 1x1, or 0 = one level),
+// u32 pixel pointer (32-aligned), u32 0. Levels follow each other unpadded.
+
+pub const PC_FMT_DXT1: u16 = 4;
+pub const PC_FMT_DXT5: u16 = 5;
+pub const PC_HEADER_LEN: usize = 0x10;
+
+/// GameCube textures store each colour channel squared (`gc = c² / 255`)
+/// compared with the PC and PS2-prototype art; apply that before encoding
+/// for GameCube so converted cars match the retail ones.
+pub fn gc_tone(img: &Image) -> Image {
+    let mut out = img.clone();
+    for p in out.rgba.chunks_exact_mut(4) {
+        for c in &mut p[..3] {
+            *c = ((*c as u32 * *c as u32 + 127) / 255) as u8;
+        }
+    }
+    out
+}
+
+/// One 4x4 block as standard DXT1 colour data (little-endian colours,
+/// pixel 0 in the low bits), always in 4-colour mode (alpha ignored).
+fn encode_dxt_colour(px: &[[u8; 4]; 16]) -> [u8; 8] {
+    // reuse the GameCube block encoder on an opaque copy, then convert
+    let mut opaque = *px;
+    for p in &mut opaque {
+        p[3] = 255;
+    }
+    let gc = encode_block(&opaque);
+    let c0 = u16::from_be_bytes([gc[0], gc[1]]);
+    let c1 = u16::from_be_bytes([gc[2], gc[3]]);
+    let mut out = [0u8; 8];
+    out[0..2].copy_from_slice(&c0.to_le_bytes());
+    out[2..4].copy_from_slice(&c1.to_le_bytes());
+    let mut bits = 0u32;
+    for i in 0..16 {
+        let idx = (gc[4 + i / 4] >> (6 - 2 * (i % 4))) & 3;
+        bits |= (idx as u32) << (2 * i);
+    }
+    out[4..8].copy_from_slice(&bits.to_le_bytes());
+    out
+}
+
+/// DXT5 alpha block: two endpoints (8-colour mode) and 3-bit indices.
+fn encode_dxt5_alpha(px: &[[u8; 4]; 16]) -> [u8; 8] {
+    let (lo, hi) = px.iter().fold((255u8, 0u8), |(l, h), p| (l.min(p[3]), h.max(p[3])));
+    let mut out = [0u8; 8];
+    out[0] = hi;
+    out[1] = lo;
+    if hi == lo {
+        return out; // all indices 0 = a0
+    }
+    let pal: Vec<i32> = (0..8)
+        .map(|k| match k {
+            0 => hi as i32,
+            1 => lo as i32,
+            k => ((8 - k) as i32 * hi as i32 + (k - 1) as i32 * lo as i32) / 7,
+        })
+        .collect();
+    let mut bits = 0u64;
+    for (i, p) in px.iter().enumerate() {
+        let a = p[3] as i32;
+        let best = (0..8).min_by_key(|&k| (pal[k] - a).abs()).unwrap();
+        bits |= (best as u64) << (3 * i);
+    }
+    out[2..8].copy_from_slice(&bits.to_le_bytes()[..6]);
+    out
+}
+
+fn blocks(img: &Image, mut f: impl FnMut(&[[u8; 4]; 16])) {
+    for by in 0..img.h.div_ceil(4) {
+        for bx in 0..img.w.div_ceil(4) {
+            let mut px = [[0u8; 4]; 16];
+            for (i, p) in px.iter_mut().enumerate() {
+                *p = img.px_clamped(bx * 4 + i % 4, by * 4 + i / 4);
+            }
+            f(&px);
+        }
+    }
+}
+
+pub fn encode_dxt1(img: &Image) -> Vec<u8> {
+    let mut out = vec![];
+    blocks(img, |px| out.extend_from_slice(&encode_dxt_colour(px)));
+    out
+}
+
+pub fn encode_dxt5(img: &Image) -> Vec<u8> {
+    let mut out = vec![];
+    blocks(img, |px| {
+        out.extend_from_slice(&encode_dxt5_alpha(px));
+        out.extend_from_slice(&encode_dxt_colour(px));
+    });
+    out
+}
+
+/// An encoded PC texture: header fields and pixel bytes (all levels).
+pub struct PcTexture {
+    pub format: u16,
+    pub w: u16,
+    pub h: u16,
+    pub levels: u16,
+    pub pixels: Vec<u8>,
+}
+
+impl PcTexture {
+    pub fn header(&self, pixel_ptr: u32) -> [u8; PC_HEADER_LEN] {
+        let mut h = [0u8; PC_HEADER_LEN];
+        for (k, v) in [self.format, self.w, self.h, self.levels].into_iter().enumerate() {
+            h[k * 2..k * 2 + 2].copy_from_slice(&v.to_le_bytes());
+        }
+        h[8..12].copy_from_slice(&pixel_ptr.to_le_bytes());
+        h
+    }
+}
+
+/// Encode for PC: DXT5 if any pixel is not fully opaque, else DXT1. With
+/// `mipmapped`, the full chain down to 1x1 (as the PC data stores it).
+pub fn encode_pc(img: &Image, mipmapped: bool) -> Result<PcTexture> {
+    ensure!(img.w <= 1024 && img.h <= 1024, "texture too large ({}x{})", img.w, img.h);
+    let alpha = img.rgba.chunks_exact(4).any(|p| p[3] < 255);
+    let format = if alpha { PC_FMT_DXT5 } else { PC_FMT_DXT1 };
+    let levels = if mipmapped { (img.w.max(img.h).trailing_zeros() + 1) as usize } else { 1 };
+    let mut pixels = vec![];
+    let mut level = img.clone();
+    for k in 0..levels {
+        if k > 0 {
+            level = level.half();
+        }
+        pixels.extend(if alpha { encode_dxt5(&level) } else { encode_dxt1(&level) });
+    }
+    Ok(PcTexture {
+        format,
+        w: img.w as u16,
+        h: img.h as u16,
+        levels: if mipmapped { levels as u16 } else { 0 },
+        pixels,
+    })
+}
+
+fn dxt_colours(c0: u16, c1: u16, four: bool) -> [[u8; 4]; 4] {
+    let e = |c: u16| from565(c);
+    let (a, b) = (e(c0), e(c1));
+    let m = |x: [i32; 3], a: u8| [x[0] as u8, x[1] as u8, x[2] as u8, a];
+    if four || c0 > c1 {
+        [
+            m(a, 255),
+            m(b, 255),
+            m([(2 * a[0] + b[0]) / 3, (2 * a[1] + b[1]) / 3, (2 * a[2] + b[2]) / 3], 255),
+            m([(a[0] + 2 * b[0]) / 3, (a[1] + 2 * b[1]) / 3, (a[2] + 2 * b[2]) / 3], 255),
+        ]
+    } else {
+        [m(a, 255), m(b, 255), m([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], 255), [0, 0, 0, 0]]
+    }
+}
+
+/// Decode level 0 of a PC texture (DXT1 / DXT5 / raw RGB / RGBA).
+pub fn decode_pc(format: u16, w: usize, h: usize, px: &[u8]) -> Result<Image> {
+    let mut rgba = vec![0u8; w * h * 4];
+    let (bw, bh) = (w.div_ceil(4), h.div_ceil(4));
+    match format {
+        PC_FMT_DXT1 | PC_FMT_DXT5 => {
+            let stride = if format == PC_FMT_DXT1 { 8 } else { 16 };
+            ensure!(px.len() >= bw * bh * stride, "DXT data too short");
+            for b in 0..bw * bh {
+                let blk = &px[b * stride..b * stride + stride];
+                let (ab, cb) = if format == PC_FMT_DXT5 { (Some(&blk[..8]), &blk[8..]) } else { (None, blk) };
+                let c0 = u16::from_le_bytes([cb[0], cb[1]]);
+                let c1 = u16::from_le_bytes([cb[2], cb[3]]);
+                let pal = dxt_colours(c0, c1, format == PC_FMT_DXT5);
+                let bits = u32::from_le_bytes(cb[4..8].try_into().unwrap());
+                let alpha = ab.map(|a| {
+                    let (a0, a1) = (a[0] as i32, a[1] as i32);
+                    let mut ab = [0u8; 8];
+                    ab[..6].copy_from_slice(&a[2..8]);
+                    (a0, a1, u64::from_le_bytes(ab))
+                });
+                for i in 0..16 {
+                    let (x, y) = ((b % bw) * 4 + i % 4, (b / bw) * 4 + i / 4);
+                    if x >= w || y >= h {
+                        continue;
+                    }
+                    let mut p = pal[((bits >> (2 * i)) & 3) as usize];
+                    if format == PC_FMT_DXT1 {
+                        p[3] = 255; // uploaded as RGB DXT1: alpha ignored
+                    }
+                    if let Some((a0, a1, ab)) = alpha {
+                        let k = ((ab >> (3 * i)) & 7) as i32;
+                        p[3] = match k {
+                            0 => a0,
+                            1 => a1,
+                            k if a0 > a1 => ((8 - k) * a0 + (k - 1) * a1) / 7,
+                            6 => 0,
+                            7 => 255,
+                            k => ((6 - k) * a0 + (k - 1) * a1) / 5,
+                        } as u8;
+                    }
+                    let d = (y * w + x) * 4;
+                    rgba[d..d + 4].copy_from_slice(&p);
+                }
+            }
+        }
+        0 | 1 => {
+            let bpp = if format == 0 { 3 } else { 4 };
+            ensure!(px.len() >= w * h * bpp, "raw texture data too short");
+            for i in 0..w * h {
+                let s = &px[i * bpp..];
+                rgba[i * 4..i * 4 + 4].copy_from_slice(&[s[0], s[1], s[2], if bpp == 4 { s[3] } else { 255 }]);
+            }
+        }
+        f => bail!("unsupported PC texture format {f}"),
+    }
+    Ok(Image { w, h, rgba })
+}
+
+#[cfg(test)]
+mod pc_tests {
+    use super::*;
+
+    fn img(w: usize, h: usize, a: impl Fn(usize, usize) -> u8) -> Image {
+        let mut rgba = vec![];
+        for y in 0..h {
+            for x in 0..w {
+                rgba.extend_from_slice(&[(x * 255 / w) as u8, 40, (y * 255 / h) as u8, a(x, y)]);
+            }
+        }
+        Image { w, h, rgba }
+    }
+
+    #[test]
+    fn dxt1_roundtrip_close() {
+        let i = img(32, 32, |_, _| 255);
+        let t = encode_pc(&i, true).unwrap();
+        assert_eq!(t.format, PC_FMT_DXT1);
+        assert_eq!(t.levels, 6);
+        assert_eq!(t.pixels.len(), 512 + 128 + 32 + 8 + 8 + 8);
+        let d = decode_pc(t.format, 32, 32, &t.pixels).unwrap();
+        let err: u64 = i.rgba.iter().zip(&d.rgba).map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs() as u64).sum();
+        assert!((err as f64 / i.rgba.len() as f64) < 6.0);
+    }
+
+    #[test]
+    fn dxt5_keeps_alpha() {
+        let i = img(16, 16, |x, _| (x * 16) as u8);
+        let t = encode_pc(&i, false).unwrap();
+        assert_eq!(t.format, PC_FMT_DXT5);
+        let d = decode_pc(t.format, 16, 16, &t.pixels).unwrap();
+        for (a, b) in i.rgba.chunks_exact(4).zip(d.rgba.chunks_exact(4)) {
+            assert!((a[3] as i32 - b[3] as i32).abs() <= 20);
+        }
+    }
+
+    #[test]
+    fn gc_tone_squares() {
+        let i = Image { w: 1, h: 1, rgba: vec![255, 128, 0, 77] };
+        assert_eq!(gc_tone(&i).rgba, vec![255, 64, 0, 77]);
     }
 }

@@ -166,3 +166,95 @@ Open items:
   `--view-offset` if any sits too high/low.
 - Converted car sounds are PCM16 (≈3.6× the size of VAG); fine in the port,
   untested on hardware.
+
+---
+
+# Part 2: the PC version (`.xpc`)
+
+Goal: the same three cars as new cars 33–35 in `orig/pc/HW_Cars.xpc`, tested
+with `orig/pc/Hot Wheels.exe` (runs under Wine; see "Running the PC game"
+below).
+
+## P1. First look (2026-10-31)
+
+- PC is the same release as GameCube (v183), little-endian like the
+  prototype. Every car exists in both PC and GameCube with the same models,
+  so PC structures can be checked against their GameCube twins exactly.
+- Geometry and LOD headers have the GameCube layout; the magic is `0x0002`
+  (GameCube `0x2003`) and the per-group draw data differs (OpenGL renderer).
+  Texture headers are 0x10 bytes (GameCube: 0x20 slots).
+- The interface packs hold the same car lists as GameCube (little-endian):
+  `hwvx-x roster` now works on PC archives too (one car-select screen per
+  pack on PC).
+- No source code: the 33-car unlock limit is in `Hot Wheels.exe` and needs a
+  binary patch.
+
+## Running the PC game under Wine (Fedora)
+
+Two packaging gaps had to be fixed before the retail PC game would start:
+- **"requires DirectX 8.0"**: the game probes `D3D8.DLL` (it renders with
+  OpenGL). Fedora's Wine ships the 32-bit DLL as `wine-d3d8.dll` but does
+  not register the `wine-d3d8(x86-32)` alternative. Fix: copy
+  `/usr/lib64/wine-wow64/wine/i386-windows/wine-d3d8.dll` to
+  `~/.wine/drive_c/windows/syswow64/d3d8.dll` (or register the alternative).
+- **"File: Voice_.cpp Line: 253"**: no Wine audio driver → install
+  `wine-pulseaudio`.
+- The PC copy has no `FMV_` folder; the intro movies are skipped with an
+  "could not be opened" message each.
+
+## P2. The 33-car limit in `Hot Wheels.exe` (`research/pc_exe.md`)
+
+Only two places limit the car count: the bounds checks (`cmp eax,0x21`) in
+the code-variable 0x64 (car unlocked) get (VA 0x42A680) and set
+(VA 0x429FA0). Car select, names and AI car choice take their ranges from
+data; the save-data struct has the GameCube layout with the same unused
+padding.
+
+`hwvx-x patch-exe "orig/pc/Hot Wheels.exe"` (35 bytes, in place, backup
+written as `Hot Wheels.exe.orig`, `--revert` undoes it):
+- get: ids 33–35 → 1 (unlocked); ids ≥ 36 still 0;
+- set: ids 33–35 stored in the unused save padding (same as HWVX-SDL).
+The new code sits in two 15-byte NOP alignment gaps after a `ret`; checked
+that nothing in the exe jumps there (function map from HWVX-PC-Decomp +
+disassembly), and it uses relative jumps only.
+
+PC interface data: same structures as GameCube (little-endian). Thumbnails
+for 33–35 are textures 0x3A–0x3C (interface 3) and 0x61–0x63 (interfaces
+6/7); PC textures are DXT1 (format 4) / DXT5 (format 5) with mips.
+
+## P3. PC formats (`research/pc_formats.md`) and the PC converter
+
+PC vs GameCube car packs (same release, every car exists in both, so the
+mapping was checked byte-for-byte on real data):
+- **Models:** GameCube header/LOD/group layout, magic `0x0002`. Each group
+  has a triangle count (+0x10) and a u16 triangle list (+0x1C,
+  `glDrawElements`); each LOD has one shared vertex array (position stride
+  16, UV 8, normal 16, colour 4). Everything 16-byte aligned. Shadow volumes
+  as GameCube plus open edges (second normal 0), colour 0, no texture.
+- **Textures:** packed 0x10-byte headers; DXT1 (format 4, opaque) or DXT5
+  (format 5, any transparency), full mip chain to 1x1.
+- **Sounds:** GameCube layout, little-endian, samples 16-byte aligned.
+- **Everything else:** same structures, little-endian — the prototype's
+  object graph is used as is (no byte swap).
+
+`port-car` writes PC packs when `--into` is a PC archive. Checked on a car
+present in all three builds (prototype `car_0` → PC vs retail PC `car_0`):
+same groups, triangle counts and flags for every model; vertex counts differ
+slightly where the retail exporter shifted UVs, as on GameCube.
+`render-car` and `roster --cars` read PC packs too (DXT decode); PC
+thumbnails are DXT5 with 8 levels, stored upside down like GameCube's.
+
+### Colour correction found along the way
+
+Comparing the same textures in all three builds: prototype ≈ PC, while
+GameCube stores every channel squared (`gc ≈ c² / 255`, darker). The first
+GameCube conversion used the prototype colours unchanged, so the new cars
+were brighter than the retail GameCube cars. Fixed (`texture::gc_tone`), and
+the GameCube files in `HWVX-SDL/orig/files/` rebuilt.
+
+## PC status (2026-10-31)
+
+Installed in `orig/pc/`: `HW_Cars.xpc` (37 packs), `HW_IPack.xpc` (names,
+range, thumbnails), 14 worlds (results-screen names), patched
+`Hot Wheels.exe`. Originals in `orig/pc-backup/` (17 files). Waiting for
+in-game feedback.

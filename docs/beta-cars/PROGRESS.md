@@ -258,3 +258,32 @@ Installed in `orig/pc/`: `HW_Cars.xpc` (37 packs), `HW_IPack.xpc` (names,
 range, thumbnails), 14 worlds (results-screen names), patched
 `Hot Wheels.exe`. Originals in `orig/pc-backup/` (17 files). Waiting for
 in-game feedback.
+
+## P4. Crash after landing a stunt (PC, Sweet 16 II in Joyride)
+
+Reported from play. Wine: page fault at 0x45D7B9 in the PC sound-voice code
+(it indexes a voice table with a Sound record's first byte and calls
+DirectSound `SetCurrentPosition`/`SetVolume` on a stale buffer).
+Cause: every prototype car has one Sound record of **type 2** (its
+explosion/crash sound, HW_Cars sound 12 → release 3). The release only uses
+type 0 (positional) and 1 (plain sample) — the same sound is type 1 in all
+33 retail cars — and the GameCube code happened to tolerate 2.
+Fix (`port-car`, both platforms): Sound type 2 → 1, and the category byte
+(+1) remapped from prototype to release numbering (1/5/2/10 → 10/6/9/1).
+One positional sound per car keeps category 3 (no release equivalent known).
+PC and GameCube `HW_Cars` rebuilt and reinstalled.
+
+## Status (2026-10-31, after play-testing)
+
+Confirmed in play by the user:
+- **PC** (`orig/pc`, Wine): the three cars select, race and do stunts with no
+  crash after the Sound-type fix.
+- **GameCube** (HWVX-SDL): car select, drag race results, Joyride and
+  adventure missions (world 2) with the new cars — "all good".
+
+Still open:
+- AI opponents never pick the new cars (world car slots cap random AI
+  vehicles at id 32, `maxVehicle` at +0x37).
+- A real GameCube would need the unlock change patched into the DOL.
+- One positional Sound per car keeps prototype category 3 (no release
+  equivalent known); harmless in testing.

@@ -139,6 +139,38 @@ enum Cmd {
         #[arg(long, default_value_t = 25.0, allow_hyphen_values = true)]
         pitch: f32,
     },
+    /// Export the models of an extracted GameCube pack (or of every pack in an
+    /// extracted archive) to glTF binary (.glb), with embedded textures.
+    /// Cars are posed on their skeleton; other packs export every geometry.
+    ExportGltf {
+        /// Extracted GameCube pack folder, or an extracted archive folder
+        /// (one .glb per pack with models)
+        input: PathBuf,
+        /// Output .glb (pack) or folder (archive). Default: next to the
+        /// input, named after it
+        output: Option<PathBuf>,
+        /// Extracted archive (or a tree of them) to find shared packs in, e.g.
+        /// an extracted HW_share.xgc. The input's own archive is always searched
+        #[arg(long = "share", value_name = "FOLDER")]
+        share: Vec<PathBuf>,
+        /// Texture pack for geometry (quad) packs: the extracted world texture
+        /// pack (wN_tex), or its archive folder
+        #[arg(long, value_name = "FOLDER")]
+        textures: Option<PathBuf>,
+        /// Export every LOD, not just the most detailed one
+        #[arg(long)]
+        all_lods: bool,
+        /// Cars: also export the damaged versions of breakable body parts
+        #[arg(long)]
+        damaged: bool,
+        /// Cars: export every geometry in the pack at the origin instead of
+        /// the posed car
+        #[arg(long)]
+        scan: bool,
+        /// Overwrite existing output files
+        #[arg(long)]
+        force: bool,
+    },
     /// Patch the PC Hot Wheels.exe so added cars (ids 33-35) are unlocked
     PatchExe {
         /// Hot Wheels.exe to patch in place (a backup is written next to it
@@ -180,6 +212,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Pack { input, output, force } => cmd_pack(&input, output, force),
         Cmd::Verify { paths, platform } => cmd_verify(&paths, platform),
         Cmd::Textures { pack, output } => cmd_textures(&pack, &output),
+        Cmd::ExportGltf { input, output, share, textures, all_lods, damaged, scan, force } => {
+            let opts = hwvx_xfile::gltf::Options { all_lods, damaged, scan };
+            cmd_export_gltf(&input, output, &share, textures.as_deref(), &opts, force)
+        }
         Cmd::PatchExe { exe, revert } => cmd_patch_exe(&exe, revert),
         Cmd::RenderCar { pack, output, size, yaw, pitch } => cmd_render_car(&pack, &output, size, yaw, pitch),
         Cmd::Roster { ipack, names, hint, cars, thumbs } => cmd_roster(&ipack, &names, &hint, cars.as_deref(), &thumbs),
@@ -660,6 +696,154 @@ fn cmd_render_car(pack: &Path, output: &Path, size: usize, yaw: f32, pitch: f32)
     let img = hwvx_xfile::render::render_car(&blob, e, &tex, size, yaw, pitch)?;
     fs::write(output, hwvx_xfile::convert::texture::tga(&img))?;
     out!("{}", output.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Decoded textures of the extracted pack folder `dir` (none for quad packs).
+fn pack_texture_images(dir: &Path, platform: Platform) -> Result<Vec<hwvx_xfile::convert::texture::Image>> {
+    let sp = read_split(dir)?;
+    let hwvx_xfile::pack::PackHeader::Standard(h) = &sp.json.header else { return Ok(vec![]) };
+    let blob = hwvx_xfile::blob::Blob::from_split(platform.endian(), &sp);
+    hwvx_xfile::render::pack_textures(&blob, platform, h.num_textures, h.texture_data_offset)
+}
+
+/// Extracted GameCube archives (manifest.json files) at or under `path`.
+fn manifests_under(path: &Path) -> Result<Vec<PathBuf>> {
+    if path.join(MANIFEST_FILE).is_file() {
+        return Ok(vec![path.join(MANIFEST_FILE)]);
+    }
+    if path.file_name().is_some_and(|n| n == MANIFEST_FILE) {
+        return Ok(vec![path.to_path_buf()]);
+    }
+    collect(&[path.to_path_buf()], |p| p.file_name().is_some_and(|n| n == MANIFEST_FILE))
+}
+
+/// Shared-pack textures needed by `blob`, looked up by pack id among the share
+/// and world texture packs of the archives in `roots`.
+fn shared_textures(
+    blob: &hwvx_xfile::blob::Blob,
+    roots: &[PathBuf],
+    cache: &mut std::collections::HashMap<u32, Option<Vec<hwvx_xfile::convert::texture::Image>>>,
+) -> Result<std::collections::HashMap<u32, Vec<hwvx_xfile::convert::texture::Image>>> {
+    let mut out = std::collections::HashMap::new();
+    let ids: std::collections::BTreeSet<u32> = blob.texture_relocs.iter().map(|r| r.pack()).filter(|&p| p != 0).collect();
+    for id in ids {
+        if !cache.contains_key(&id) {
+            let mut found = None;
+            'search: for root in roots {
+                for mpath in manifests_under(root)? {
+                    let m = parse_manifest(&fs::read(&mpath)?)?;
+                    if m.platform != Platform::Gc {
+                        continue;
+                    }
+                    for e in &m.entries {
+                        // share packs (HW_share, HW_Cars, HW_Items...)
+                        if e.kind == hwvx_xfile::format::PackType(8) && e.id == id && e.layout == Layout::Split {
+                            found = Some(pack_texture_images(&mpath.parent().unwrap().join(&e.path), m.platform)?);
+                            break 'search;
+                        }
+                    }
+                }
+            }
+            cache.insert(id, found);
+        }
+        if let Some(Some(t)) = cache.get(&id) {
+            out.insert(id, t.clone());
+        }
+    }
+    Ok(out)
+}
+
+fn cmd_export_gltf(
+    input: &Path,
+    output: Option<PathBuf>,
+    share: &[PathBuf],
+    textures: Option<&Path>,
+    opts: &hwvx_xfile::gltf::Options,
+    force: bool,
+) -> Result<ExitCode> {
+    use hwvx_xfile::format::PackType;
+    let input = if input.file_name().is_some_and(|n| n == MANIFEST_FILE) { input.parent().unwrap_or(Path::new(".")) } else { input };
+    // (pack folder, its manifest entry type) to export, and the archive root
+    let archive = input.join(MANIFEST_FILE).is_file();
+    let root = if archive { input.to_path_buf() } else { input.parent().unwrap_or(Path::new(".")).to_path_buf() };
+    let manifest_path = root.join(MANIFEST_FILE);
+    let manifest = parse_manifest(&fs::read(&manifest_path).with_context(|| {
+        format!("reading {} (expected an extracted pack folder or archive folder)", manifest_path.display())
+    })?)?;
+    if manifest.platform != Platform::Gc {
+        bail!("{} is a {} archive; export-gltf reads GameCube packs", root.display(), manifest.platform);
+    }
+    let packs: Vec<(PathBuf, PackType)> = manifest
+        .entries
+        .iter()
+        .filter(|e| e.layout == Layout::Split)
+        .map(|e| (root.join(&e.path), e.kind))
+        .filter(|(p, _)| archive || p.file_name() == input.file_name())
+        .collect();
+    if packs.is_empty() {
+        bail!("{} is not a split pack of {}", input.display(), root.display());
+    }
+    let out_dir = if archive {
+        let d = output.clone().unwrap_or_else(|| PathBuf::from(format!("{}_gltf", input.display())));
+        fs::create_dir_all(&d)?;
+        Some(d)
+    } else {
+        None
+    };
+
+    // textures for quad (geometry) packs: a world texture pack folder, or the
+    // first one in an archive folder
+    let world_tex = match textures {
+        None => vec![],
+        Some(t) => {
+            let dir = if t.join(MANIFEST_FILE).is_file() {
+                let m = parse_manifest(&fs::read(t.join(MANIFEST_FILE))?)?;
+                let e = m.entries.iter().find(|e| e.kind == PackType(6) || e.kind == PackType(4))
+                    .with_context(|| format!("{} has no world texture pack", t.display()))?;
+                t.join(&e.path)
+            } else {
+                t.to_path_buf()
+            };
+            pack_texture_images(&dir, pack_platform(&dir)?)?
+        }
+    };
+
+    let mut roots = vec![root.clone()];
+    roots.extend(share.iter().cloned());
+    let mut cache = std::collections::HashMap::new();
+    let mut written = 0;
+    for (dir, kind) in &packs {
+        let sp = read_split(dir)?;
+        let blob = hwvx_xfile::blob::Blob::from_split(Endian::Big, &sp);
+        let local = if sp.is_quad() { world_tex.clone() } else { pack_texture_images(dir, Platform::Gc)? };
+        let tex = hwvx_xfile::gltf::Textures { local, shared: shared_textures(&blob, &roots, &mut cache)? };
+        let name = file_name(dir);
+        let path = match &out_dir {
+            Some(d) => d.join(format!("{name}.glb")),
+            None => output.clone().unwrap_or_else(|| dir.with_extension("glb")),
+        };
+        let (glb, rep) = match hwvx_xfile::gltf::export(&blob, &name, kind.0 == 0, &tex, opts) {
+            Ok(r) => r,
+            Err(e) if archive => {
+                let _ = e; // packs without models (sounds, interfaces...)
+                continue;
+            }
+            Err(e) => return Err(e.context(dir.display().to_string())),
+        };
+        if path.exists() && !force {
+            bail!("{} exists (pass --force to overwrite)", path.display());
+        }
+        fs::write(&path, glb).with_context(|| format!("writing {}", path.display()))?;
+        written += 1;
+        out!("{}: {} meshes, {} triangles, {} textures", path.display(), rep.meshes, rep.triangles, rep.textures);
+        for w in &rep.warnings {
+            out!("  warning: {w}");
+        }
+    }
+    if written == 0 {
+        bail!("no models found in {}", input.display());
+    }
     Ok(ExitCode::SUCCESS)
 }
 

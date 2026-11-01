@@ -18,6 +18,7 @@ pub mod blob;
 pub mod convert;
 pub mod exepatch;
 pub mod format;
+pub mod gltf;
 pub mod hex;
 pub mod pack;
 pub mod render;

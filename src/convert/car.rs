@@ -433,6 +433,41 @@ pub fn convert(beta: &SplitPack, opt: &Options) -> Result<(SplitPack, Report)> {
         blob.put_u32(te, car + 4 * k as u32, v.to_bits());
     }
 
+    // ---- sound records: release values -------------------------------------
+    // A Sound record (ExtractKeys.c) starts with u8 type (0 positional,
+    // 1 plain sample) and u8 1 (a category the GameCube code ignores). The
+    // prototype also uses type 2 (its explosion sound) and other category
+    // numbers; the PC game indexes a voice table with these bytes and crashed
+    // on type 2. The release turned these into type 1 and remapped the
+    // categories (1/5/2/10 -> 10/6/9/1, matched over 16 cars in both builds).
+    let mut sound_fixes = 0;
+    let slots: Vec<u32> = blob.sound_relocs.iter().map(|r| r.slot).collect();
+    for slot in slots {
+        let Some(rec) = slot.checked_sub(0x14) else { continue };
+        let (t, c) = (rec as usize, rec as usize + 1);
+        if c >= blob.data.len() {
+            continue;
+        }
+        if blob.data[t] == 2 {
+            blob.data[t] = 1;
+            sound_fixes += 1;
+        }
+        let cat = match blob.data[c] {
+            1 => 10,
+            5 => 6,
+            2 => 9,
+            10 => 1,
+            x => x,
+        };
+        if cat != blob.data[c] {
+            blob.data[c] = cat;
+            sound_fixes += 1;
+        }
+    }
+    if sound_fixes > 0 {
+        report.notes.push(format!("{sound_fixes} sound-record byte(s) changed to release values"));
+    }
+
     // ---- 7. new pack id ----------------------------------------------------------
     let table = blob.u32(te, 4).context("root table")?;
     ensure!(blob.u32(te, 0) == Some(1), "expected one root object");

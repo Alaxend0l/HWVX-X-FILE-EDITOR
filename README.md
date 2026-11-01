@@ -43,6 +43,38 @@ overwrite an existing file. Pass `--force` to override either. With `--force`,
 | `hwvx-x port-car <prototype car pack> --into <GC HW_Cars folder> --id N` | Convert a PS2-prototype car into a GameCube car pack and add it as car `N` |
 | `hwvx-x roster <GC HW_IPack folder> --name 'N=Name*' --cars <GC HW_Cars folder>` | Add cars to the car-select screens (range, names, rendered thumbnails) |
 | `hwvx-x render-car <GC car pack> out.tga` | Textured preview render of a GameCube car |
+| `hwvx-x export-gltf <GC pack or archive folder> [out]` | Export models to glTF binary (`.glb`) with embedded textures |
+
+### Model export (glTF)
+
+`hwvx-x export-gltf <GC pack or archive folder> [out]` writes GameCube models
+as self-contained `.glb` files (glTF 2.0, textures embedded as PNG), which
+Blender and most 3D tools can open.
+
+```sh
+hwvx-x extract orig/gc/files/HW_share.xgc work/HW_share     # shared textures (tyres etc.)
+hwvx-x export-gltf work/HW_Cars/01_car_0 car0.glb --share work/HW_share
+hwvx-x export-gltf work/HW_Cars cars_glb --share work/HW_share   # one .glb per pack
+hwvx-x export-gltf work/w1_geo w1_glb --textures work/w1_tex --share work/HW_share
+```
+
+- Car packs are posed on their skeleton. Each bone becomes a node, and the
+  rigid parts and breakable body parts hang off their bones. Skinned
+  geometry becomes a glTF skin. `--damaged` adds the damaged body parts,
+  `--scan` exports every geometry at the origin instead.
+- Other packs (items, worlds, quad geometry packs) export every geometry as
+  its own node at the origin. World geometry is already in world space.
+  Quad packs take their textures from the world texture pack (`wN_tex`), so
+  pass it with `--textures`.
+- Shared textures are looked up by pack id in the input's own archive and in
+  each `--share` folder. When a shared pack is missing, the command prints a
+  warning and leaves those textures out.
+- `--all-lods` adds the lower LODs as extra `..._lodN` nodes.
+- Materials: lit groups become PBR materials. Unlit groups use
+  `KHR_materials_unlit` with vertex colours. Translucent groups use `BLEND`,
+  cut-out textures use `MASK`, and env-mapped chrome becomes a metallic
+  material in the group's tint colour. The raw group flags, blend mode and
+  colour are kept in each material's `extras`.
 
 See [`docs/beta-cars/`](docs/beta-cars/README.md) for the full walkthrough
 (adding Fandango, Sweet 16 II and Jester from the PS2 prototype) and the

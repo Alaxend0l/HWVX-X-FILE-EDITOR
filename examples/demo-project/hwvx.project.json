@@ -1,0 +1,25 @@
+{
+  "$schema": "../../schemas/project.schema.json",
+  "schema_version": 1,
+  "name": "demo-project",
+  "description": "Rebuild the PC archive from vendor files, dropping world 2 and adding one edited interface pack. Run `hwvx-x extract ../../../orig/pc/files vendor/pc` first (see README).",
+  "default_platform": "pc",
+  "container": "xarchive",
+  "targets": [
+    { "name": "pc" },
+    { "name": "pc-xnc", "platform": "pc", "container": "xnc" }
+  ],
+  "default_targets": ["pc"],
+  "archives": [
+    {
+      "output": "files",
+      "base": {
+        "from": "vendor/pc",
+        "exclude": ["world:2"]
+      },
+      "packs": [
+        { "kind": "hwvx_pack", "path": "mywork/04_interface_0" }
+      ]
+    }
+  ]
+}

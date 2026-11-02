@@ -204,6 +204,30 @@ enum Cmd {
         #[arg(long, value_enum)]
         platform: Option<Platform>,
     },
+    /// Build archives from a project (hwvx.project.json): vendor packs,
+    /// split-pack folders and raw blobs into .xpc/.xgc/.xps or .xnc files
+    Build {
+        /// Project folder, or the hwvx.project.json file itself
+        project: PathBuf,
+        /// Target to build: a name from the project, or name:xarchive|xnc.
+        /// Repeatable. Default: default_targets, else all declared targets
+        #[arg(long = "target")]
+        targets: Vec<String>,
+        /// Output folder (default: <project>/build)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Overwrite existing archives
+        #[arg(short, long)]
+        force: bool,
+        /// Print the build report as JSON (diagnostics included)
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print a built-in JSON schema (project)
+    Schema {
+        /// Schema name: project
+        name: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -236,7 +260,54 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::RenderCar { pack, output, size, yaw, pitch, stretch, env } => cmd_render_car(&pack, &output, size, yaw, pitch, stretch, env.as_deref()),
         Cmd::Roster { ipack, names, hint, cars, thumbs, stretch, env } => cmd_roster(&ipack, &names, &hint, cars.as_deref(), &thumbs, stretch, env.as_deref()),
         Cmd::PortCar { beta, into, id, donor, imports, view_offset, force } => cmd_port_car(&beta, &into, id, donor, &imports, view_offset, force),
+        Cmd::Build { project, targets, out, force, json } => cmd_build(&project, &targets, out, force, json),
+        Cmd::Schema { name } => cmd_schema(&name),
     }
+}
+
+/// Build every archive of a project for the selected targets.
+fn cmd_build(project: &Path, targets: &[String], out: Option<PathBuf>, force: bool, json: bool) -> Result<ExitCode> {
+    let dir = out.unwrap_or_else(|| {
+        let root = if project.is_file() { project.parent().unwrap_or(Path::new(".")).to_path_buf() } else { project.to_path_buf() };
+        root.join("build")
+    });
+    let outcome = hwvx_xfile::compiler::build_project(project, targets, &dir, force);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&outcome.report)?);
+    } else {
+        for d in &outcome.diags.items {
+            eprintln!("{d}");
+        }
+        for a in &outcome.report.archives {
+            println!("wrote {} ({} packs, {} bytes)", a.output, a.packs.len(), a.bytes);
+        }
+        let (e, w) = (outcome.report.errors, outcome.report.warnings);
+        if outcome.exit == 0 {
+            println!(
+                "build ok: {} archive(s) for {} target(s) of project {:?} into {}",
+                outcome.report.archives.len(),
+                outcome.report.targets.len(),
+                outcome.report.project,
+                dir.display()
+            );
+        } else {
+            eprintln!("build failed: {e} error(s), {w} warning(s)");
+        }
+    }
+    Ok(ExitCode::from(outcome.exit))
+}
+
+/// Print one of the embedded JSON schemas.
+fn cmd_schema(name: &str) -> Result<ExitCode> {
+    let text = match name {
+        "project" | "project.schema.json" => include_str!("../schemas/project.schema.json"),
+        other => {
+            let known = ["project"];
+            anyhow::bail!("unknown schema {other:?} (known: {})", known.join(", "));
+        }
+    };
+    print!("{text}");
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Files under `paths` (recursing into folders) accepted by `keep`, sorted.

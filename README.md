@@ -80,6 +80,31 @@ See [`docs/beta-cars/`](docs/beta-cars/README.md) for the full walkthrough
 (adding Fandango, Sweet 16 II and Jester from the PS2 prototype) and the
 format research behind it.
 
+## Compiler
+
+`hwvx-x build` assembles archives from a declarative project instead of one
+extracted folder. It reads `hwvx.project.json`: each archive reuses an
+extracted vendor archive as a base, drops packs with `exclude`, and appends
+edited split-pack folders or raw pack blobs.
+
+```sh
+hwvx-x build examples/demo-project            # -> build/files.xpc
+hwvx-x build . --target pc --target pc-xnc    # same build, both containers
+hwvx-x build . --json > report.json           # machine-readable build report
+hwvx-x schema project                         # JSON Schema for the project file
+```
+
+Every archive is built once per selected target. A target picks a platform
+(`pc`, `gc`, `ps2`) and a container: the classic `.xpc`/`.xgc`/`.xps` format,
+or `.xnc` — a newer container with named, CRC-protected TOC entries and room
+for per-pack compression. Builds are vendor-first today (reshuffle stock
+content); generating pack contents from authored sources is on the roadmap.
+
+- Compiler docs: [`docs/compiler/`](docs/compiler/README.md)
+- Project format: [`docs/compiler/project-format.md`](docs/compiler/project-format.md)
+- The `.xnc` container: [`docs/compiler/custom-format.md`](docs/compiler/custom-format.md)
+- Runnable example: [`examples/demo-project/`](examples/demo-project/hwvx.project.json)
+
 ## Extracted layout
 
 ```

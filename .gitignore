@@ -4,6 +4,7 @@ build-*/
 orig/
 out/
 work/
+car_thumbnails/
 
 # Prerequisites
 *.d

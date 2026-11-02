@@ -15,6 +15,7 @@
 
 pub mod archive;
 pub mod blob;
+pub mod compiler;
 pub mod convert;
 pub mod exepatch;
 pub mod format;
@@ -23,6 +24,7 @@ pub mod hex;
 pub mod pack;
 pub mod render;
 pub mod roster;
+pub mod xnc;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};

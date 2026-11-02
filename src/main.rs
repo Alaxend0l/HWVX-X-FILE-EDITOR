@@ -123,6 +123,10 @@ enum Cmd {
         /// any size; drawn upright, transparent background)
         #[arg(long = "thumb")]
         thumbs: Vec<String>,
+        /// Menu pack (mcp.xgc / mcp.xpc, or its extracted folder) to take
+        /// the chrome sphere maps from; default: a procedural stand-in
+        #[arg(long)]
+        env: Option<PathBuf>,
     },
     /// Render a preview of a GameCube or PC car pack (3/4 view, transparent background)
     RenderCar {
@@ -138,6 +142,10 @@ enum Cmd {
         /// Viewing angle above the car in degrees
         #[arg(long, default_value_t = 25.0, allow_hyphen_values = true)]
         pitch: f32,
+        /// Menu pack (mcp.xgc / mcp.xpc, or its extracted folder) to take
+        /// the chrome sphere maps from; default: a procedural stand-in
+        #[arg(long)]
+        env: Option<PathBuf>,
     },
     /// Export the models of an extracted GameCube pack (or of every pack in an
     /// extracted archive) to glTF binary (.glb), with embedded textures.
@@ -217,8 +225,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             cmd_export_gltf(&input, output, &share, textures.as_deref(), &opts, force)
         }
         Cmd::PatchExe { exe, revert } => cmd_patch_exe(&exe, revert),
-        Cmd::RenderCar { pack, output, size, yaw, pitch } => cmd_render_car(&pack, &output, size, yaw, pitch),
-        Cmd::Roster { ipack, names, hint, cars, thumbs } => cmd_roster(&ipack, &names, &hint, cars.as_deref(), &thumbs),
+        Cmd::RenderCar { pack, output, size, yaw, pitch, env } => cmd_render_car(&pack, &output, size, yaw, pitch, env.as_deref()),
+        Cmd::Roster { ipack, names, hint, cars, thumbs, env } => cmd_roster(&ipack, &names, &hint, cars.as_deref(), &thumbs, env.as_deref()),
         Cmd::PortCar { beta, into, id, donor, imports, view_offset, force } => cmd_port_car(&beta, &into, id, donor, &imports, view_offset, force),
     }
 }
@@ -580,7 +588,7 @@ fn cmd_port_car(beta: &Path, into: &Path, id: u32, donor: Option<PathBuf>, impor
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, thumbs: &[String]) -> Result<ExitCode> {
+fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, thumbs: &[String], env: Option<&Path>) -> Result<ExitCode> {
     use hwvx_xfile::blob::Blob;
 
     let mut list = vec![];
@@ -597,6 +605,7 @@ fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, t
         images.insert(id.trim().parse::<u32>()?, img);
     }
     if let Some(cars) = cars {
+        let env = load_env(env)?;
         let m = parse_manifest(&fs::read(cars.join(MANIFEST_FILE)).with_context(|| format!("reading {}", cars.join(MANIFEST_FILE).display()))?)?;
         for (id, _) in &list {
             if images.contains_key(id) {
@@ -605,7 +614,7 @@ fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, t
             let e = m.entries.iter().find(|e| e.kind == hwvx_xfile::format::PackType(0) && e.id == *id)
                 .with_context(|| format!("{} has no car with id {id}", cars.display()))?;
             let (blob, en, tex) = load_car(&cars.join(&e.path))?;
-            images.insert(*id, hwvx_xfile::render::render_car(&blob, en, &tex, 128, 35.0, 25.0)?);
+            images.insert(*id, hwvx_xfile::render::render_car(&blob, en, &tex, &env, 128, 35.0, 25.0)?);
         }
     }
     // every extracted GameCube archive at or under `ipack` (HW_IPack, worlds)
@@ -691,9 +700,40 @@ fn load_car(pack: &Path) -> Result<(hwvx_xfile::blob::Blob, Endian, Vec<hwvx_xfi
     Ok((blob, e, tex))
 }
 
-fn cmd_render_car(pack: &Path, output: &Path, size: usize, yaw: f32, pitch: f32) -> Result<ExitCode> {
+/// Chrome sphere maps from the menu pack at `path` (archive file, extracted
+/// archive folder or extracted pack folder), else the procedural stand-ins.
+fn load_env(path: Option<&Path>) -> Result<hwvx_xfile::render::EnvMaps> {
+    use hwvx_xfile::pack::PackHeader;
+    use hwvx_xfile::render::EnvMaps;
+    let Some(path) = path else { return Ok(EnvMaps::procedural()) };
+    let ctx = || format!("reading sphere maps from {}", path.display());
+    let (sp, platform) = if path.is_file() {
+        let platform = match path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).as_deref() {
+            Some("xgc") => Platform::Gc,
+            Some("xpc") => Platform::Pc,
+            _ => bail!("{}: expected a .xgc or .xpc menu pack", path.display()),
+        };
+        let data = fs::read(path).with_context(ctx)?;
+        let a = Archive::parse(&data, platform).with_context(ctx)?;
+        let e = a.entries.first().with_context(|| format!("{} is empty", path.display()))?;
+        (hwvx_xfile::split_checked(platform, e).with_context(ctx)?, platform)
+    } else if path.join(MANIFEST_FILE).is_file() {
+        let m = parse_manifest(&fs::read(path.join(MANIFEST_FILE)).with_context(ctx)?)?;
+        let e = m.entries.first().with_context(|| format!("{} is empty", path.display()))?;
+        (read_split(&path.join(&e.path)).with_context(ctx)?, m.platform)
+    } else {
+        (read_split(path).with_context(ctx)?, pack_platform(path).with_context(ctx)?)
+    };
+    let PackHeader::Standard(h) = &sp.json.header else { bail!("{}: not a menu pack", path.display()) };
+    let blob = hwvx_xfile::blob::Blob::from_split(platform.endian(), &sp);
+    let tex = hwvx_xfile::render::pack_textures(&blob, platform, h.num_textures, h.texture_data_offset).with_context(ctx)?;
+    EnvMaps::from_mcp(&blob, &tex).with_context(ctx)
+}
+
+fn cmd_render_car(pack: &Path, output: &Path, size: usize, yaw: f32, pitch: f32, env: Option<&Path>) -> Result<ExitCode> {
     let (blob, e, tex) = load_car(pack)?;
-    let img = hwvx_xfile::render::render_car(&blob, e, &tex, size, yaw, pitch)?;
+    let env = load_env(env)?;
+    let img = hwvx_xfile::render::render_car(&blob, e, &tex, &env, size, yaw, pitch)?;
     fs::write(output, hwvx_xfile::convert::texture::tga(&img))?;
     out!("{}", output.display());
     Ok(ExitCode::SUCCESS)

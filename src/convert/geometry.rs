@@ -351,7 +351,7 @@ fn gc_flags(beta: u16) -> u16 {
 }
 
 /// Does a group with these (GC) flags index normals (else colours)?
-fn uses_normals(f: u16) -> bool {
+pub fn uses_normals(f: u16) -> bool {
     f & (F_ENV | F_LIT | F_ENV_ADD) != 0 && f & (F_ALPHA | F_ALPHA2) == 0
 }
 

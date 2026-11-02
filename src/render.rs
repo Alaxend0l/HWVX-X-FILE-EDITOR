@@ -6,15 +6,19 @@
 //!
 //! Shading follows the GameCube's own per-group flags: unlit textured groups
 //! are drawn as-is (the retail game bakes light into their textures), F_LIT
-//! groups get a fake directional light through their vertex normals, and F_ENV
-//! / F_ENV_ADD chrome groups get a sky/horizon reflection gradient tinted by
-//! the group colour, blended normally or added.
+//! groups get a fake directional light through their vertex normals. Chrome
+//! follows the game's EnvMap(): F_ENV groups are drawn with a sphere map
+//! (texcoords = view-space normal × ½ + ½) modulated by the group colour,
+//! unlit and in place of their own texture; F_ENV_ADD groups are drawn
+//! normally and then get a second, additive sphere-map pass tinted by the
+//! group colour / 4. The sphere maps are the menu pack's (mcp, see
+//! [`EnvMaps`]); without them a procedural stand-in is used.
 
 use anyhow::{Context, Result};
 
 use crate::blob::Blob;
 use crate::convert::texture::{self, Image};
-use crate::convert::geometry::{F_ALPHA, F_ALPHA2, F_ENV, F_ENV_ADD, F_LIT, F_SHADOW, GC_MAGIC, PC_MAGIC};
+use crate::convert::geometry::{F_ALPHA, F_ALPHA2, F_ENV, F_ENV_ADD, F_LIT, F_SHADOW, GC_MAGIC, PC_MAGIC, uses_normals};
 use crate::format::{Endian, Platform};
 
 
@@ -35,6 +39,66 @@ fn norm(a: V3) -> V3 {
 }
 fn mix(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t.clamp(0.0, 1.0)
+}
+
+/// The two sphere maps the game binds for env-mapped groups
+/// (`Gfx_SetEnvmap(a, b)`; in car select from the menu pack's MCP, slots
+/// +0x14 and +0x18).
+pub struct EnvMaps {
+    /// `b`: opaque chrome (F_ENV groups)
+    pub chrome: Image,
+    /// `a`: additive gloss pass (F_ENV_ADD groups)
+    pub gloss: Image,
+}
+
+impl EnvMaps {
+    /// From the mcp pack: its textures and texture relocs. The lower slot is
+    /// `a` (gloss), the higher one `b` (chrome).
+    pub fn from_mcp(b: &Blob, textures: &[Image]) -> Result<EnvMaps> {
+        let mut r: Vec<_> = b.texture_relocs.iter().filter(|r| r.pack() == 0).collect();
+        r.sort_by_key(|r| r.slot);
+        anyhow::ensure!(r.len() >= 2, "the menu pack references {} own textures (expected 2 sphere maps)", r.len());
+        let get = |i: u32| textures.get(i as usize).cloned().with_context(|| format!("sphere map texture {i} missing"));
+        Ok(EnvMaps { gloss: get(r[0].index())?, chrome: get(r[1].index())? })
+    }
+
+    /// Stand-ins in the same layout as the game's: looking down (top of the
+    /// map) a dark skyline, a bright band at the horizon, sky below.
+    pub fn procedural() -> EnvMaps {
+        let n = 128usize;
+        let mut chrome = Vec::with_capacity(n * n * 4);
+        let mut gloss = Vec::with_capacity(n * n * 4);
+        for y in 0..n {
+            for x in 0..n {
+                let (u, v) = ((x as f32 + 0.5) / n as f32 * 2.0 - 1.0, (y as f32 + 0.5) / n as f32 * 2.0 - 1.0);
+                let r = (u * u + v * v).sqrt().min(1.0);
+                // v: -1 = facing down (ground/buildings), +1 = facing up (sky)
+                let c = if v < -0.08 {
+                    let k = ((-v - 0.08) / 0.92).clamp(0.0, 1.0);
+                    [mix(95.0, 25.0, k), mix(80.0, 22.0, k), mix(62.0, 20.0, k)]
+                } else if v < 0.08 {
+                    let k = (v + 0.08) / 0.16;
+                    [mix(150.0, 210.0, k), mix(140.0, 215.0, k), mix(125.0, 225.0, k)]
+                } else {
+                    let k = ((v - 0.08) / 0.92).clamp(0.0, 1.0);
+                    [mix(140.0, 245.0, k), mix(170.0, 248.0, k), mix(210.0, 252.0, k)]
+                };
+                let rim = 1.0 - 0.45 * r.powi(6); // grazing angles darken
+                chrome.extend([c[0] * rim, c[1] * rim, c[2] * rim].map(|f| f as u8));
+                chrome.push(255);
+                let g = (mix(40.0, 200.0, (v * 0.5 + 0.5).powi(2)) * rim) as u8;
+                gloss.extend([g, g, g, 255]);
+            }
+        }
+        EnvMaps { chrome: Image { w: n, h: n, rgba: chrome }, gloss: Image { w: n, h: n, rgba: gloss } }
+    }
+}
+
+/// Bilinear-free texel fetch with wrapping.
+fn sample(img: &Image, u: f32, v: f32) -> [u8; 4] {
+    let tx = (u.rem_euclid(1.0) * img.w as f32) as usize % img.w;
+    let ty = (v.rem_euclid(1.0) * img.h as f32) as usize % img.h;
+    img.px(tx, ty)
 }
 
 /// Rotation (quaternion x,y,z,w) + translation.
@@ -78,8 +142,8 @@ impl Xf {
 enum Shade {
     Unlit,
     Lit,
+    /// F_ENV: opaque sphere-map chrome instead of the group's texture
     Env,
-    EnvAdd,
 }
 
 struct Tri {
@@ -87,10 +151,16 @@ struct Tri {
     uv: [[f32; 2]; 3],
     /// world-space vertex normals (zeros -> fall back to the face normal)
     n: [[f32; 3]; 3],
+    /// per-vertex colours (0..255; the GC display list indexes normals OR
+    /// colours through the attribute index, so groups indexing normals get
+    /// white here — 255 = no tint)
+    vc: [[f32; 4]; 3],
     tex: Option<usize>,
     /// flat colour when untextured (env-mapped chrome etc.)
     colour: [u8; 4],
     shade: Shade,
+    /// F_ENV_ADD: additive sphere-map pass over the normally drawn group
+    gloss: bool,
     alpha: bool,
 }
 
@@ -153,23 +223,27 @@ fn geometry_tris(b: &Blob, e: Endian, g: u32, xf: &Xf, out: &mut Vec<Tri>) {
     let (Some(groups), Some(vb)) = (b.ptr(e, lod + 8), b.ptr(e, lod + 0xC)) else { return };
     let ng = half(lod + 2) as u32;
     let tex_slots: std::collections::HashMap<u32, u32> = b.texture_relocs.iter().map(|r| (r.slot, r.value)).collect();
-    // vertex arrays: position, normals (0 = none) and uv fetch bases
-    let (pos_at, pos_stride, uv_at, nrm_at, nrm_stride) = if pc {
+    // vertex arrays: position, normals (0 = none), colours (0 = none, 4-byte
+    // entries) and uv fetch bases
+    let (pos_at, pos_stride, uv_at, nrm_at, nrm_stride, clr_at) = if pc {
         (
             b.u32(e, vb).unwrap_or(0),
             16,
             b.u32(e, vb + 8).unwrap_or(0),
             b.u32(e, vb + 0xC).unwrap_or(0),
             16,
+            b.u32(e, vb + 4).unwrap_or(0),
         )
     } else {
         let nrm_off = b.u32(e, vb + 8).unwrap_or(0);
+        let clr_off = b.u32(e, vb + 4).unwrap_or(0);
         (
             vb + 0x10,
             12,
             vb + 0x10 + b.u32(e, vb).unwrap_or(0),
             if nrm_off == 0 { 0 } else { vb + 0x10 + nrm_off },
             12,
+            if clr_off == 0 { 0 } else { vb + 0x10 + clr_off },
         )
     };
     for k in 0..ng {
@@ -202,40 +276,52 @@ fn geometry_tris(b: &Blob, e: Endian, g: u32, xf: &Xf, out: &mut Vec<Tri>) {
             Some(s) => [s[0], s[1], s[2], 255],
             None => [255; 4],
         };
-        let shade = if flags & F_ENV_ADD != 0 {
-            Shade::EnvAdd
-        } else if flags & F_ENV != 0 {
+        // RenderGroup(): alpha groups first, then F_ENV, else opaque (+ the
+        // F_ENV_ADD pass)
+        let alpha = flags & (F_ALPHA | F_ALPHA2) != 0;
+        let shade = if flags & F_ENV != 0 && !alpha {
             Shade::Env
         } else if flags & F_LIT != 0 {
             Shade::Lit
         } else {
             Shade::Unlit
         };
-        let alpha = flags & (F_ALPHA | F_ALPHA2) != 0;
+        let gloss = flags & F_ENV_ADD != 0 && flags & F_ENV == 0 && !alpha;
+        // the attribute index selects normals or colours per the group flags
+        let want_n = uses_normals(flags);
         for t in verts.chunks_exact(3) {
             let mut p = [[0.0; 3]; 3];
             let mut uv = [[0.0; 2]; 3];
             let mut n = [[0.0; 3]; 3];
+            let mut vc = [[255.0; 4]; 3];
             for (j, (pi, ai, ti)) in t.iter().enumerate() {
                 let pp = pos_at + pi * pos_stride;
                 p[j] = xf.apply([f32_at(b, e, pp), f32_at(b, e, pp + 4), f32_at(b, e, pp + 8)]);
-                if nrm_at != 0 {
-                    let nn = nrm_at + ai * nrm_stride;
-                    let lv = [f32_at(b, e, nn), f32_at(b, e, nn + 4), f32_at(b, e, nn + 8)];
-                    n[j] = xf.rot(lv);
+                if want_n {
+                    if nrm_at != 0 {
+                        let nn = nrm_at + ai * nrm_stride;
+                        let lv = [f32_at(b, e, nn), f32_at(b, e, nn + 4), f32_at(b, e, nn + 8)];
+                        n[j] = xf.rot(lv);
+                    }
+                } else if clr_at != 0 {
+                    let cc = clr_at + ai * 4;
+                    match b.data.get(cc as usize..(cc + 4) as usize) {
+                        Some(s) => vc[j] = [s[0] as f32, s[1] as f32, s[2] as f32, s[3] as f32],
+                        None => {}
+                    }
                 }
                 let tt = uv_at + ti * 8;
                 uv[j] = [f32_at(b, e, tt), f32_at(b, e, tt + 4)];
             }
-            out.push(Tri { p, uv, n, tex, colour, shade, alpha });
+            out.push(Tri { p, uv, n, vc, tex, colour, shade, gloss, alpha });
         }
     }
 }
 
 /// Render the car of a GameCube or PC car pack. `textures`: the pack's own
-/// textures, decoded. Returns a `size`×`size` RGBA image (transparent
+/// textures, decoded; `env`: the sphere maps for chrome. Returns a `size`×`size` RGBA image (transparent
 /// background). `yaw`/`pitch` in degrees: 0/0 looks at the car's front.
-pub fn render_car(b: &Blob, e: Endian, textures: &[Image], size: usize, yaw: f32, pitch: f32) -> Result<Image> {
+pub fn render_car(b: &Blob, e: Endian, textures: &[Image], env: &EnvMaps, size: usize, yaw: f32, pitch: f32) -> Result<Image> {
     let car = b.ptr(e, b.ptr(e, 4).context("no root table")?).context("no car")?;
     let model = b.ptr(e, car + 0x78).context("car has no model")?;
     let anim = b.ptr(e, model + 0x10).context("car has no motion animation")?;
@@ -299,8 +385,6 @@ pub fn render_car(b: &Blob, e: Endian, textures: &[Image], size: usize, yaw: f32
         [((v[0] - centre[0]) / span + 0.5) * big as f32, ((centre[1] - v[1]) / span + 0.5) * big as f32, v[2]]
     };
     let light = norm([-0.4, 0.8, 0.45]);
-    let horizon = [120.0, 118.0, 116.0];
-    let sky = [215.0, 228.0, 242.0];
     let mut colour = vec![[0f32; 4]; big * big];
     let mut depth = vec![f32::MAX; big * big];
     for t in &tris {
@@ -325,6 +409,14 @@ pub fn render_car(b: &Blob, e: Endian, textures: &[Image], size: usize, yaw: f32
                 if z >= depth[i] {
                     continue;
                 }
+                // interpolated vertex colour as a 0..1 modulator (GX multiplies
+                // vertex colour into material colour and texels alike)
+                let cvf = [
+                    (w0 * t.vc[0][0] + w1 * t.vc[1][0] + w2 * t.vc[2][0]) / 255.0,
+                    (w0 * t.vc[0][1] + w1 * t.vc[1][1] + w2 * t.vc[2][1]) / 255.0,
+                    (w0 * t.vc[0][2] + w1 * t.vc[1][2] + w2 * t.vc[2][2]) / 255.0,
+                    (w0 * t.vc[0][3] + w1 * t.vc[1][3] + w2 * t.vc[2][3]) / 255.0,
+                ];
                 // interpolated vertex normal, face normal as fallback
                 let mut nn = [
                     w0 * t.n[0][0] + w1 * t.n[1][0] + w2 * t.n[2][0],
@@ -337,32 +429,44 @@ pub fn render_car(b: &Blob, e: Endian, textures: &[Image], size: usize, yaw: f32
                 nn = norm(nn);
                 // shading follows the group's material flags
                 let shade = match t.shade {
-                    Shade::Unlit => 1.0,
+                    Shade::Unlit | Shade::Env => 1.0,
                     Shade::Lit => 0.45 + 0.55 * dot(nn, light).abs(), // two-sided
-                    Shade::Env | Shade::EnvAdd => 1.0,
                 };
-                // sky/horizon gradient reflected about the normal, tinted ×2
-                let d = dot(fwd, nn);
-                let e_t = (fwd[1] - 2.0 * d * nn[1]) * 0.5 + 0.5;
-                let envc = [
-                    (mix(horizon[0], sky[0], e_t) * (t.colour[0] as f32 / 255.0) * 2.0).min(255.0),
-                    (mix(horizon[1], sky[1], e_t) * (t.colour[1] as f32 / 255.0) * 2.0).min(255.0),
-                    (mix(horizon[2], sky[2], e_t) * (t.colour[2] as f32 / 255.0) * 2.0).min(255.0),
-                ];
-                let base = match t.shade {
-                    Shade::Env | Shade::EnvAdd => envc,
-                    _ => [t.colour[0] as f32, t.colour[1] as f32, t.colour[2] as f32],
+                // sphere-map texcoords from the view-space normal (GX texgen
+                // with the half-scaled view matrix; +y up is the map's bottom)
+                let env_uv = [dot(nn, right) * 0.5 + 0.5, dot(nn, up) * 0.5 + 0.5];
+                let mut c = match t.shade {
+                    Shade::Env => {
+                        let p = sample(&env.chrome, env_uv[0], env_uv[1]);
+                        let k = |i: usize| p[i] as f32 * t.colour[i] as f32 / 255.0;
+                        [k(0), k(1), k(2), 255.0]
+                    }
+                    _ => [
+                        t.colour[0] as f32 * cvf[0] * shade,
+                        t.colour[1] as f32 * cvf[1] * shade,
+                        t.colour[2] as f32 * cvf[2] * shade,
+                        cvf[3] * 255.0,
+                    ],
                 };
-                let mut c = [base[0] * shade, base[1] * shade, base[2] * shade, 255.0];
-                if let Some(img) = t.tex.and_then(|k| textures.get(k)) {
+                if let (Shade::Unlit | Shade::Lit, Some(img)) = (t.shade, t.tex.and_then(|k| textures.get(k))) {
                     let u = w0 * t.uv[0][0] + w1 * t.uv[1][0] + w2 * t.uv[2][0];
                     let v = w0 * t.uv[0][1] + w1 * t.uv[1][1] + w2 * t.uv[2][1];
-                    let tx = ((u.rem_euclid(1.0)) * img.w as f32) as usize % img.w;
-                    let ty = ((v.rem_euclid(1.0)) * img.h as f32) as usize % img.h;
-                    let p = img.px(tx, ty);
-                    c = [p[0] as f32 * shade, p[1] as f32 * shade, p[2] as f32 * shade, p[3] as f32];
+                    let p = sample(img, u, v);
+                    c = [
+                        p[0] as f32 * shade * cvf[0],
+                        p[1] as f32 * shade * cvf[1],
+                        p[2] as f32 * shade * cvf[2],
+                        p[3] as f32 * cvf[3],
+                    ];
                     if c[3] < 128.0 && !t.alpha {
                         continue; // cut-out
+                    }
+                }
+                if t.gloss {
+                    // second pass, blend ONE/ONE, colour >> 2
+                    let p = sample(&env.gloss, env_uv[0], env_uv[1]);
+                    for k in 0..3 {
+                        c[k] = (c[k] + p[k] as f32 * (t.colour[k] >> 2) as f32 / 255.0).min(255.0);
                     }
                 }
                 if t.alpha {
@@ -375,21 +479,8 @@ pub fn render_car(b: &Blob, e: Endian, textures: &[Image], size: usize, yaw: f32
                     dst[3] = dst[3].max(a * 255.0);
                     continue;
                 }
-                match t.shade {
-                    Shade::EnvAdd => {
-                        // F_ENV_ADD chrome: add the reflection over what's behind
-                        let dst = &mut colour[i];
-                        for k in 0..3 {
-                            dst[k] = (dst[k] + c[k]).min(255.0);
-                        }
-                        dst[3] = 255.0;
-                        depth[i] = z;
-                    }
-                    _ => {
-                        depth[i] = z;
-                        colour[i] = [c[0], c[1], c[2], 255.0];
-                    }
-                }
+                depth[i] = z;
+                colour[i] = [c[0], c[1], c[2], 255.0];
             }
         }
     }

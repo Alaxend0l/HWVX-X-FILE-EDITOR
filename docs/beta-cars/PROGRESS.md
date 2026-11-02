@@ -287,3 +287,29 @@ Still open:
 - A real GameCube would need the unlock change patched into the DOL.
 - One positional Sound per car keeps prototype category 3 (no release
   equivalent known); harmless in testing.
+
+## P5. Preview colour bug (2026-11-02)
+
+Reported from play: in the car-select thumbnails the textured body looked
+right, but the windows, tyres and rims were completely the wrong colour.
+Cause: `src/render.rs` never read **vertex colours** — groups that index
+colours instead of normals (the ones without env/lit flags: windows, tyres,
+rims, …) were drawn with only the group (material) colour, which is white
+for those parts. Fixed: read the colour array from the vertex buffer (GC
+header entry `+4`, PC vertex buffer `+4`, 4-byte RGBA entries per vertex)
+and modulate it the way GX / the PC renderer do — into the material colour,
+the env (chrome) colour, and each texel — with vertex alpha modulating the
+output alpha. Rendered previews of all three cars in both builds look right
+(dark tyres, silver rims, tinted glass), and the car-select thumbnails were
+re-rendered into `HW_IPack` (`HWVX-SDL/orig/files/HW_IPack.xgc`,
+`orig/pc/HW_IPack.xpc`).
+
+Follow-up: chrome (engines, rims) looked flat cream/white. The renderer
+faked env mapping with a sky gradient ×2 and drew F_ENV_ADD groups as a
+replacement blended over whatever was already drawn. Now it follows
+`EnvMap()` (`Render_Geometry_.c`): F_ENV groups sample a sphere map at
+view-space normal × ½ + ½, modulated by the group colour (unlit, no own
+texture); F_ENV_ADD groups draw normally, then add a second sphere map ×
+colour/4. The sphere maps are the menu pack's (MCP +0x14 gloss, +0x18
+chrome): pass `--env orig/gc/files/mcp.xgc` (or .xpc / an extracted
+folder) to `render-car` / `roster`; without it a procedural stand-in is used.

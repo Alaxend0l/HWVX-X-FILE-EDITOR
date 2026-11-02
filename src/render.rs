@@ -1,13 +1,21 @@
 //! A small software renderer for GameCube car packs: poses the car's model
 //! parts on its skeleton (rest pose), textures them with the pack's own
-//! textures and draws a 3/4 view on a transparent background. Used to make
-//! car-select thumbnails and to preview converted cars.
+//! textures plus any share-pack textures it references, and draws a 3/4 view
+//! on a transparent background. Used to make car-select thumbnails and to
+//! preview converted cars.
+//!
+//! Shading follows the GameCube's own per-group flags: unlit textured groups
+//! are drawn as-is (the retail game bakes light into their textures), F_LIT
+//! groups get a fake directional light through their vertex normals, and F_ENV
+//! / F_ENV_ADD chrome groups get a sky/horizon reflection gradient tinted by
+//! the group colour, blended normally or added.
 
 use anyhow::{Context, Result};
 
 use crate::blob::Blob;
 use crate::convert::texture::{self, Image};
-use crate::format::Endian;
+use crate::convert::geometry::{F_ALPHA, F_ALPHA2, F_ENV, F_ENV_ADD, F_LIT, F_SHADOW, GC_MAGIC, PC_MAGIC};
+use crate::format::{Endian, Platform};
 
 
 type V3 = [f32; 3];
@@ -24,6 +32,9 @@ fn dot(a: V3, b: V3) -> f32 {
 fn norm(a: V3) -> V3 {
     let l = dot(a, a).sqrt().max(1e-12);
     [a[0] / l, a[1] / l, a[2] / l]
+}
+fn mix(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t.clamp(0.0, 1.0)
 }
 
 /// Rotation (quaternion x,y,z,w) + translation.
@@ -62,12 +73,24 @@ impl Xf {
     }
 }
 
+/// How a group's material flags tell the console to shade it.
+#[derive(Clone, Copy)]
+enum Shade {
+    Unlit,
+    Lit,
+    Env,
+    EnvAdd,
+}
+
 struct Tri {
     p: [V3; 3],
     uv: [[f32; 2]; 3],
+    /// world-space vertex normals (zeros -> fall back to the face normal)
+    n: [[f32; 3]; 3],
     tex: Option<usize>,
     /// flat colour when untextured (env-mapped chrome etc.)
     colour: [u8; 4],
+    shade: Shade,
     alpha: bool,
 }
 
@@ -116,7 +139,6 @@ fn rd16(e: Endian, b: &[u8], o: u32) -> u16 {
 
 /// Triangles of LOD 0 of a GameCube or PC geometry, transformed by `xf`.
 fn geometry_tris(b: &Blob, e: Endian, g: u32, xf: &Xf, out: &mut Vec<Tri>) {
-    use crate::convert::geometry::{GC_MAGIC, PC_MAGIC};
     let half = |o: u32| rd16(e, &b.data, o);
     // half(g + 4) != 0: skinned geometry (not drawn by the preview)
     if b.data.len() < (g + 0x40) as usize || half(g + 4) != 0 {
@@ -131,46 +153,81 @@ fn geometry_tris(b: &Blob, e: Endian, g: u32, xf: &Xf, out: &mut Vec<Tri>) {
     let (Some(groups), Some(vb)) = (b.ptr(e, lod + 8), b.ptr(e, lod + 0xC)) else { return };
     let ng = half(lod + 2) as u32;
     let tex_slots: std::collections::HashMap<u32, u32> = b.texture_relocs.iter().map(|r| (r.slot, r.value)).collect();
-    // vertex fetch: (position index, uv index) -> position, uv
-    let (pos_at, pos_stride, uv_at) = if pc {
-        (b.u32(e, vb).unwrap_or(0), 16, b.u32(e, vb + 8).unwrap_or(0))
+    // vertex arrays: position, normals (0 = none) and uv fetch bases
+    let (pos_at, pos_stride, uv_at, nrm_at, nrm_stride) = if pc {
+        (
+            b.u32(e, vb).unwrap_or(0),
+            16,
+            b.u32(e, vb + 8).unwrap_or(0),
+            b.u32(e, vb + 0xC).unwrap_or(0),
+            16,
+        )
     } else {
-        (vb + 0x10, 12, vb + 0x10 + b.u32(e, vb).unwrap_or(0))
+        let nrm_off = b.u32(e, vb + 8).unwrap_or(0);
+        (
+            vb + 0x10,
+            12,
+            vb + 0x10 + b.u32(e, vb).unwrap_or(0),
+            if nrm_off == 0 { 0 } else { vb + 0x10 + nrm_off },
+            12,
+        )
     };
     for k in 0..ng {
         let gr = groups + 0x20 * k;
         let flags = half(gr + 2);
-        if flags & crate::convert::geometry::F_SHADOW != 0 {
+        if flags & F_SHADOW != 0 {
             continue;
         }
         let Some(dl) = b.ptr(e, gr + 0x1C) else { continue };
-        // (position, uv) index pairs of each vertex
-        let verts: Vec<(u32, u32)> = if pc {
+        // (position, attribute, uv) index triple per vertex
+        let verts: Vec<(u32, u32, u32)> = if pc {
             let n = b.u32(e, gr + 0x10).unwrap_or(0) * 3;
             (0..n).map(|v| {
                 let i = half(dl + 2 * v) as u32;
-                (i, i)
+                (i, i, i)
             }).collect()
         } else {
             if b.data.get(dl as usize) != Some(&0x90) {
                 continue;
             }
             let n = half(dl + 1) as u32;
-            (0..n).map(|v| (half(dl + 3 + v * 6) as u32, half(dl + 3 + v * 6 + 4) as u32)).collect()
+            (0..n).map(|v| (
+                half(dl + 3 + v * 6) as u32,
+                half(dl + 3 + v * 6 + 2) as u32,
+                half(dl + 3 + v * 6 + 4) as u32,
+            )).collect()
         };
         let tex = tex_slots.get(&(gr + 0x18)).filter(|v| *v >> 16 == 0).map(|v| (*v & 0xFFFF) as usize);
-        let colour = if flags & 2 != 0 { [170, 175, 185, 255] } else { [150, 150, 150, 255] };
-        let alpha = flags & 1 != 0;
+        let colour = match b.data.get((gr + 4) as usize..(gr + 8) as usize) {
+            Some(s) => [s[0], s[1], s[2], 255],
+            None => [255; 4],
+        };
+        let shade = if flags & F_ENV_ADD != 0 {
+            Shade::EnvAdd
+        } else if flags & F_ENV != 0 {
+            Shade::Env
+        } else if flags & F_LIT != 0 {
+            Shade::Lit
+        } else {
+            Shade::Unlit
+        };
+        let alpha = flags & (F_ALPHA | F_ALPHA2) != 0;
         for t in verts.chunks_exact(3) {
             let mut p = [[0.0; 3]; 3];
             let mut uv = [[0.0; 2]; 3];
-            for (j, &(pi, ti)) in t.iter().enumerate() {
+            let mut n = [[0.0; 3]; 3];
+            for (j, (pi, ai, ti)) in t.iter().enumerate() {
                 let pp = pos_at + pi * pos_stride;
                 p[j] = xf.apply([f32_at(b, e, pp), f32_at(b, e, pp + 4), f32_at(b, e, pp + 8)]);
+                if nrm_at != 0 {
+                    let nn = nrm_at + ai * nrm_stride;
+                    let lv = [f32_at(b, e, nn), f32_at(b, e, nn + 4), f32_at(b, e, nn + 8)];
+                    n[j] = xf.rot(lv);
+                }
                 let tt = uv_at + ti * 8;
                 uv[j] = [f32_at(b, e, tt), f32_at(b, e, tt + 4)];
             }
-            out.push(Tri { p, uv, tex, colour, alpha });
+            out.push(Tri { p, uv, n, tex, colour, shade, alpha });
         }
     }
 }
@@ -242,12 +299,11 @@ pub fn render_car(b: &Blob, e: Endian, textures: &[Image], size: usize, yaw: f32
         [((v[0] - centre[0]) / span + 0.5) * big as f32, ((centre[1] - v[1]) / span + 0.5) * big as f32, v[2]]
     };
     let light = norm([-0.4, 0.8, 0.45]);
+    let horizon = [120.0, 118.0, 116.0];
+    let sky = [215.0, 228.0, 242.0];
     let mut colour = vec![[0f32; 4]; big * big];
     let mut depth = vec![f32::MAX; big * big];
     for t in &tris {
-        let n = norm(cross(sub(t.p[1], t.p[0]), sub(t.p[2], t.p[0])));
-        // two-sided lighting (winding is not needed for a preview)
-        let shade = 0.45 + 0.55 * dot(n, light).abs();
         let s: Vec<[f32; 3]> = t.p.iter().map(|&p| to_px(view(p))).collect();
         let area = (s[1][0] - s[0][0]) * (s[2][1] - s[0][1]) - (s[2][0] - s[0][0]) * (s[1][1] - s[0][1]);
         if area.abs() < 1e-6 {
@@ -269,30 +325,71 @@ pub fn render_car(b: &Blob, e: Endian, textures: &[Image], size: usize, yaw: f32
                 if z >= depth[i] {
                     continue;
                 }
-                let mut c = [t.colour[0] as f32, t.colour[1] as f32, t.colour[2] as f32, 255.0];
+                // interpolated vertex normal, face normal as fallback
+                let mut nn = [
+                    w0 * t.n[0][0] + w1 * t.n[1][0] + w2 * t.n[2][0],
+                    w0 * t.n[0][1] + w1 * t.n[1][1] + w2 * t.n[2][1],
+                    w0 * t.n[0][2] + w1 * t.n[1][2] + w2 * t.n[2][2],
+                ];
+                if dot(nn, nn) < 1e-8 {
+                    nn = norm(cross(sub(t.p[1], t.p[0]), sub(t.p[2], t.p[0])));
+                }
+                nn = norm(nn);
+                // shading follows the group's material flags
+                let shade = match t.shade {
+                    Shade::Unlit => 1.0,
+                    Shade::Lit => 0.45 + 0.55 * dot(nn, light).abs(), // two-sided
+                    Shade::Env | Shade::EnvAdd => 1.0,
+                };
+                // sky/horizon gradient reflected about the normal, tinted ×2
+                let d = dot(fwd, nn);
+                let e_t = (fwd[1] - 2.0 * d * nn[1]) * 0.5 + 0.5;
+                let envc = [
+                    (mix(horizon[0], sky[0], e_t) * (t.colour[0] as f32 / 255.0) * 2.0).min(255.0),
+                    (mix(horizon[1], sky[1], e_t) * (t.colour[1] as f32 / 255.0) * 2.0).min(255.0),
+                    (mix(horizon[2], sky[2], e_t) * (t.colour[2] as f32 / 255.0) * 2.0).min(255.0),
+                ];
+                let base = match t.shade {
+                    Shade::Env | Shade::EnvAdd => envc,
+                    _ => [t.colour[0] as f32, t.colour[1] as f32, t.colour[2] as f32],
+                };
+                let mut c = [base[0] * shade, base[1] * shade, base[2] * shade, 255.0];
                 if let Some(img) = t.tex.and_then(|k| textures.get(k)) {
                     let u = w0 * t.uv[0][0] + w1 * t.uv[1][0] + w2 * t.uv[2][0];
                     let v = w0 * t.uv[0][1] + w1 * t.uv[1][1] + w2 * t.uv[2][1];
                     let tx = ((u.rem_euclid(1.0)) * img.w as f32) as usize % img.w;
                     let ty = ((v.rem_euclid(1.0)) * img.h as f32) as usize % img.h;
                     let p = img.px(tx, ty);
-                    c = [p[0] as f32, p[1] as f32, p[2] as f32, p[3] as f32];
+                    c = [p[0] as f32 * shade, p[1] as f32 * shade, p[2] as f32 * shade, p[3] as f32];
                     if c[3] < 128.0 && !t.alpha {
                         continue; // cut-out
                     }
                 }
                 if t.alpha {
-                    // translucent (glass): blend over what is there, keep depth
+                    // translucent (glass): blend over what's there, keep depth
                     let a = (c[3] / 255.0).clamp(0.25, 0.8);
-                    let d = &mut colour[i];
+                    let dst = &mut colour[i];
                     for k in 0..3 {
-                        d[k] = d[k] * (1.0 - a) + c[k] * shade * a;
+                        dst[k] = dst[k] * (1.0 - a) + c[k] * a;
                     }
-                    d[3] = d[3].max(a * 255.0);
+                    dst[3] = dst[3].max(a * 255.0);
                     continue;
                 }
-                depth[i] = z;
-                colour[i] = [c[0] * shade, c[1] * shade, c[2] * shade, 255.0];
+                match t.shade {
+                    Shade::EnvAdd => {
+                        // F_ENV_ADD chrome: add the reflection over what's behind
+                        let dst = &mut colour[i];
+                        for k in 0..3 {
+                            dst[k] = (dst[k] + c[k]).min(255.0);
+                        }
+                        dst[3] = 255.0;
+                        depth[i] = z;
+                    }
+                    _ => {
+                        depth[i] = z;
+                        colour[i] = [c[0], c[1], c[2], 255.0];
+                    }
+                }
             }
         }
     }
@@ -321,7 +418,7 @@ pub fn render_car(b: &Blob, e: Endian, textures: &[Image], size: usize, yaw: f32
     Ok(Image { w: size, h: size, rgba })
 }
 
-/// Decode a GameCube pack's own textures (level 0).
-pub fn pack_textures(b: &Blob, platform: crate::format::Platform, num: u32, offset: u32) -> Result<Vec<Image>> {
+/// Decode the pack's own textures from a GameCube or PC car pack (level 0 only).
+pub fn pack_textures(b: &Blob, platform: Platform, num: u32, offset: u32) -> Result<Vec<Image>> {
     Ok(texture::decode_pack_textures(platform, &b.data, num, offset, 0)?.into_iter().map(|(_, i)| i).collect())
 }

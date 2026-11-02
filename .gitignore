@@ -3,6 +3,7 @@ build/
 build-*/
 orig/
 out/
+work/
 
 # Prerequisites
 *.d

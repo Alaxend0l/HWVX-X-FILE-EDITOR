@@ -123,6 +123,10 @@ enum Cmd {
         /// any size; drawn upright, transparent background)
         #[arg(long = "thumb")]
         thumbs: Vec<String>,
+        /// Squash rendered thumbnails towards square the way the game's own
+        /// are (default: keep the car's proportions)
+        #[arg(long)]
+        stretch: bool,
         /// Menu pack (mcp.xgc / mcp.xpc, or its extracted folder) to take
         /// the chrome sphere maps from; default: a procedural stand-in
         #[arg(long)]
@@ -137,11 +141,15 @@ enum Cmd {
         #[arg(long, default_value_t = 256)]
         size: usize,
         /// Viewing angle around the car in degrees (0 = from the front)
-        #[arg(long, default_value_t = 35.0, allow_hyphen_values = true)]
+        #[arg(long, default_value_t = hwvx_xfile::render::THUMB_YAW, allow_hyphen_values = true)]
         yaw: f32,
         /// Viewing angle above the car in degrees
-        #[arg(long, default_value_t = 25.0, allow_hyphen_values = true)]
+        #[arg(long, default_value_t = hwvx_xfile::render::THUMB_PITCH, allow_hyphen_values = true)]
         pitch: f32,
+        /// Squash the car towards square the way the game's car-select
+        /// thumbnails are (default: keep the car's proportions)
+        #[arg(long)]
+        stretch: bool,
         /// Menu pack (mcp.xgc / mcp.xpc, or its extracted folder) to take
         /// the chrome sphere maps from; default: a procedural stand-in
         #[arg(long)]
@@ -225,8 +233,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             cmd_export_gltf(&input, output, &share, textures.as_deref(), &opts, force)
         }
         Cmd::PatchExe { exe, revert } => cmd_patch_exe(&exe, revert),
-        Cmd::RenderCar { pack, output, size, yaw, pitch, env } => cmd_render_car(&pack, &output, size, yaw, pitch, env.as_deref()),
-        Cmd::Roster { ipack, names, hint, cars, thumbs, env } => cmd_roster(&ipack, &names, &hint, cars.as_deref(), &thumbs, env.as_deref()),
+        Cmd::RenderCar { pack, output, size, yaw, pitch, stretch, env } => cmd_render_car(&pack, &output, size, yaw, pitch, stretch, env.as_deref()),
+        Cmd::Roster { ipack, names, hint, cars, thumbs, stretch, env } => cmd_roster(&ipack, &names, &hint, cars.as_deref(), &thumbs, stretch, env.as_deref()),
         Cmd::PortCar { beta, into, id, donor, imports, view_offset, force } => cmd_port_car(&beta, &into, id, donor, &imports, view_offset, force),
     }
 }
@@ -588,7 +596,7 @@ fn cmd_port_car(beta: &Path, into: &Path, id: u32, donor: Option<PathBuf>, impor
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, thumbs: &[String], env: Option<&Path>) -> Result<ExitCode> {
+fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, thumbs: &[String], stretch: bool, env: Option<&Path>) -> Result<ExitCode> {
     use hwvx_xfile::blob::Blob;
 
     let mut list = vec![];
@@ -614,7 +622,7 @@ fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, t
             let e = m.entries.iter().find(|e| e.kind == hwvx_xfile::format::PackType(0) && e.id == *id)
                 .with_context(|| format!("{} has no car with id {id}", cars.display()))?;
             let (blob, en, tex) = load_car(&cars.join(&e.path))?;
-            images.insert(*id, hwvx_xfile::render::render_car(&blob, en, &tex, &env, 128, 35.0, 25.0)?);
+            images.insert(*id, hwvx_xfile::render::render_car(&blob, en, &tex, &env, 128, hwvx_xfile::render::THUMB_YAW, hwvx_xfile::render::THUMB_PITCH, stretch)?);
         }
     }
     // every extracted GameCube archive at or under `ipack` (HW_IPack, worlds)
@@ -730,10 +738,10 @@ fn load_env(path: Option<&Path>) -> Result<hwvx_xfile::render::EnvMaps> {
     EnvMaps::from_mcp(&blob, &tex).with_context(ctx)
 }
 
-fn cmd_render_car(pack: &Path, output: &Path, size: usize, yaw: f32, pitch: f32, env: Option<&Path>) -> Result<ExitCode> {
+fn cmd_render_car(pack: &Path, output: &Path, size: usize, yaw: f32, pitch: f32, stretch: bool, env: Option<&Path>) -> Result<ExitCode> {
     let (blob, e, tex) = load_car(pack)?;
     let env = load_env(env)?;
-    let img = hwvx_xfile::render::render_car(&blob, e, &tex, &env, size, yaw, pitch)?;
+    let img = hwvx_xfile::render::render_car(&blob, e, &tex, &env, size, yaw, pitch, stretch)?;
     fs::write(output, hwvx_xfile::convert::texture::tga(&img))?;
     out!("{}", output.display());
     Ok(ExitCode::SUCCESS)

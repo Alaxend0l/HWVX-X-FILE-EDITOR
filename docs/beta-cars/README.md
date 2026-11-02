@@ -31,7 +31,7 @@ $B port-car work/beta_cars/18_car_17 --into work/gc_cars --id 35   # Jester
 # 3. car lists: car-select screens (names, carousel range, thumbnails rendered
 #    from the cars) and the race-results screens inside the drag/battle worlds
 $B roster work/gc_ipack --name '33=Fandango*' --name '34=Sweet 16 II*' \
-    --name '35=Jester*' --cars work/gc_cars
+    --name '35=Jester*' --cars work/gc_cars --stretch --env orig/gc/files/mcp.xgc
 $B extract orig/gc/files/worlds_ work/gc_worlds
 $B roster work/gc_worlds --name '33=Fandango*' --name '34=Sweet 16 II*' \
     --name '35=Jester*'          # patches the 20 drag/battle worlds

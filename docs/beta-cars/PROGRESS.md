@@ -313,3 +313,29 @@ texture); F_ENV_ADD groups draw normally, then add a second sphere map ×
 colour/4. The sphere maps are the menu pack's (MCP +0x14 gloss, +0x18
 chrome): pass `--env orig/gc/files/mcp.xgc` (or .xpc / an extracted
 folder) to `render-car` / `roster`; without it a procedural stand-in is used.
+
+Thumbnail framing: the retail thumbnails stretch each car to fill the frame
+on both axes (median silhouette 115×112 of 128×128, centred), whatever the
+car's proportions; the renderer kept proportions, so the new cars looked
+small and flat next to them. `render-car --stretch` / `roster --stretch`
+scale each axis separately to those margins; without the flag the render
+keeps the car's proportions. GameCube thumbnails reinstalled with
+`--stretch --env orig/gc/files/mcp.xgc`.
+
+Thumbnail angle: with the stretch the view angle was visibly off. Fitted
+against the retail GameCube thumbnails (car n = car-select texture 25 + n in
+`02_interface_3`): rendering 17 retail cars over a yaw/pitch grid and
+correlating blurred edge maps peaks at yaw 39°, pitch 11° (score 0.47 vs
+0.38 for the old 35°/25°). `render::THUMB_YAW` / `THUMB_PITCH`; `roster`
+uses them and they are `render-car`'s defaults. Thumbnails reinstalled.
+
+Thumbnail framing, refit: the retail thumbnails are not "fill the box"
+either. Their silhouette aspect follows the car's real aspect (corr 0.78),
+but squashed towards square — neither a fixed 2:1 squash (worse fit) nor a
+per-car fill. Fitted on all 33 retail cars (blurred-edge correlation +
+silhouette IoU of the cropped render, resized per model, against the
+stock texture): aspect = e^-0.3 · aspect^0.45, inside a 118×110 box of
+128×128, centred (`render::thumb_box`, used by `--stretch`). Score 1.260
+vs 1.214 for the per-car fill. Re-fitting the angle with this framing moved
+it by ≤2° for a noise-level gain (1.260 at 41°/12° vs 1.254), so it stays
+39°/11°. Thumbnails reinstalled.

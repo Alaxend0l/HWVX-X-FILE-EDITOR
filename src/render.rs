@@ -318,10 +318,29 @@ fn geometry_tris(b: &Blob, e: Endian, g: u32, xf: &Xf, out: &mut Vec<Tri>) {
     }
 }
 
+/// View angle of the game's own car-select thumbnails (degrees), fitted to
+/// the retail GameCube ones by matching rendered edges (`--stretch` framing).
+pub const THUMB_YAW: f32 = 39.0;
+pub const THUMB_PITCH: f32 = 11.0;
+
+/// Size of the car in a retail-style thumbnail, as fractions of the frame,
+/// for a car whose silhouette is `aspect` (width / height) as rendered.
+/// The retail GameCube thumbnails squash cars towards square without making
+/// them all square: fitted on all 33 (edges + silhouette against renders),
+/// their aspect is e^-0.3 · aspect^0.45, inside a 118×110 box of 128×128.
+fn thumb_box(aspect: f32) -> [f32; 2] {
+    let a = (-0.3f32).exp() * aspect.max(1e-3).powf(0.45);
+    let h = (110.0f32).min(118.0 / a);
+    [h * a / 128.0, h / 128.0]
+}
+
 /// Render the car of a GameCube or PC car pack. `textures`: the pack's own
-/// textures, decoded; `env`: the sphere maps for chrome. Returns a `size`×`size` RGBA image (transparent
-/// background). `yaw`/`pitch` in degrees: 0/0 looks at the car's front.
-pub fn render_car(b: &Blob, e: Endian, textures: &[Image], env: &EnvMaps, size: usize, yaw: f32, pitch: f32) -> Result<Image> {
+/// textures, decoded; `env`: the sphere maps for chrome. Returns a
+/// `size`×`size` RGBA image (transparent background). `yaw`/`pitch` in
+/// degrees: 0/0 looks at the car's front. `stretch`: frame the car like the
+/// game's own car-select thumbnails (see [`thumb_box`]); otherwise the car
+/// keeps its proportions.
+pub fn render_car(b: &Blob, e: Endian, textures: &[Image], env: &EnvMaps, size: usize, yaw: f32, pitch: f32, stretch: bool) -> Result<Image> {
     let car = b.ptr(e, b.ptr(e, 4).context("no root table")?).context("no car")?;
     let model = b.ptr(e, car + 0x78).context("car has no model")?;
     let anim = b.ptr(e, model + 0x10).context("car has no motion animation")?;
@@ -379,10 +398,17 @@ pub fn render_car(b: &Blob, e: Endian, textures: &[Image], env: &EnvMaps, size: 
     }
     let ss = 3usize; // supersampling
     let big = size * ss;
-    let span = (hi[0] - lo[0]).max(hi[1] - lo[1]).max(1e-3) * 1.08;
+    let span = if stretch {
+        let (w, h) = ((hi[0] - lo[0]).max(1e-3), (hi[1] - lo[1]).max(1e-3));
+        let f = thumb_box(w / h);
+        [w / f[0], h / f[1]]
+    } else {
+        let s = (hi[0] - lo[0]).max(hi[1] - lo[1]).max(1e-3) * 1.08;
+        [s, s]
+    };
     let centre = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
     let to_px = |v: V3| -> [f32; 3] {
-        [((v[0] - centre[0]) / span + 0.5) * big as f32, ((centre[1] - v[1]) / span + 0.5) * big as f32, v[2]]
+        [((v[0] - centre[0]) / span[0] + 0.5) * big as f32, ((centre[1] - v[1]) / span[1] + 0.5) * big as f32, v[2]]
     };
     let light = norm([-0.4, 0.8, 0.45]);
     let mut colour = vec![[0f32; 4]; big * big];

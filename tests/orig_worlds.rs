@@ -206,6 +206,14 @@ fn w1_quads_read_pair_and_match() {
             let (qg, qo) = (&gc[i], &twin[i]);
             let qn = format!("{tag}: {} <-> {}", qg.name, qo.name);
 
+            // Reader bookkeeping: every shader relocation must land on exactly
+            // one parsed group base (and vice versa).
+            let groups_with_shader = |q: &Quad| -> usize {
+                q.models.iter().flat_map(|m| m.lods.iter().flat_map(|l| l.groups.iter())).filter(|g| g.shader.is_some()).count()
+            };
+            assert_eq!(groups_with_shader(qg), qg.blob.shader_relocs.len(), "{qn}: GameCube shader groups vs blob shader relocs");
+            assert_eq!(groups_with_shader(qo), qo.blob.shader_relocs.len(), "{qn}: {tag} shader groups vs blob shader relocs");
+
             // Rebuild the prototype/retail models as GC geometry and compare
             // the blob bookkeeping tables with the real GameCube quad.
             let mut built = Blob::default();
@@ -214,7 +222,7 @@ fn w1_quads_read_pair_and_match() {
                 built.graft(BE, &b, 32).unwrap_or_else(|e| panic!("{qn}: graft: {e:#}"));
             }
             println!(
-                "{qn}: models {:>2}/{:<2} tris {:>5}/{:<5} ptr {:>5}/{:<5} texreloc {:>3}/{:<3}",
+                "{qn}: models {:>2}/{:<2} tris {:>5}/{:<5} ptr {:>5}/{:<5} texreloc {:>3}/{:<3} shader {:>2}/{:<2}",
                 qg.models.len(),
                 qo.models.len(),
                 qg.tris(),
@@ -223,6 +231,8 @@ fn w1_quads_read_pair_and_match() {
                 qg.blob.pointers.len(),
                 built.texture_relocs.len(),
                 qg.blob.texture_relocs.len(),
+                qg.blob.shader_relocs.len(),
+                qo.blob.shader_relocs.len(),
             );
 
             if tag == "PS2r" {
@@ -230,6 +240,15 @@ fn w1_quads_read_pair_and_match() {
                 // exactly the relocation table of the retail GameCube quad,
                 // and the art must essentially agree.
                 assert_eq!(built.texture_relocs.len(), qg.blob.texture_relocs.len(), "{qn}: texture relocation count");
+                assert_eq!(built.shader_relocs.len(), qg.blob.shader_relocs.len(), "{qn}: shader relocation count");
+                for r in built.shader_relocs.iter().chain(qg.blob.shader_relocs.iter()) {
+                    assert_eq!(r.slot % 0x20, 0, "{qn}: shader reloc slot {:#x} is not a group base", r.slot);
+                }
+                let mut vg: Vec<u32> = qg.blob.shader_relocs.iter().map(|r| r.value).collect();
+                let mut vo: Vec<u32> = qo.blob.shader_relocs.iter().map(|r| r.value).collect();
+                vg.sort();
+                vo.sort();
+                assert_eq!(vg, vo, "{qn}: shader relocation values GC vs PS2-retail");
                 assert_eq!(qg.models.len(), qo.models.len(), "{qn}: model count");
                 assert_eq!(qo.models.len() as u32, gs[i].num_geoms, "{qn}: quad model count vs world table numGeoms");
                 for (mi, (mg, mo)) in qg.models.iter().zip(&qo.models).enumerate() {

@@ -65,6 +65,13 @@ pub struct Group {
     pub sort: u16,
     /// Texture relocation value (`index | pack << 16`), if textured.
     pub texture: Option<u32>,
+    /// Shader relocation value (index into the owning texture pack's shader
+    /// table) when the group's *base* offset is a shader reloc slot.  The
+    /// loader registers the group with the ShaderHolder, which keeps the
+    /// group's `textureOverride` half (offset +0x18) animated.  Such groups
+    /// carry no texture relocation; their +0x18 slot holds [`NO_TEXTURE`] on
+    /// file.
+    pub shader: Option<u32>,
     pub tris: Vec<[Vertex; 3]>,
 }
 
@@ -292,6 +299,7 @@ pub fn read_beta(blob: &Blob, off: u32) -> Result<Model> {
     let lods_at = u32_at(b, g + 8)? as usize;
     let dist_at = u32_at(b, g + 0xC)? as usize;
     let tex_slots: HashMap<u32, u32> = blob.texture_relocs.iter().map(|r| (r.slot, r.value)).collect();
+    let shader_slots: HashMap<u32, u32> = blob.shader_relocs.iter().map(|r| (r.slot, r.value)).collect();
 
     let mut lods = Vec::with_capacity(num_lods);
     for l in 0..num_lods {
@@ -318,6 +326,7 @@ pub fn read_beta(blob: &Blob, off: u32) -> Result<Model> {
                 blend: u16_at(b, gr + 0x14)?,
                 sort: u16_at(b, gr + 0x16)?,
                 texture: tex_slots.get(&((gr + 0x18) as u32)).copied(),
+                shader: shader_slots.get(&(gr as u32)).copied(),
                 tris,
             });
         }
@@ -516,10 +525,19 @@ pub fn build_gc(m: &Model, remap_texture: &mut dyn FnMut(u32) -> Option<u32>) ->
             let tex = if f & F_ENV != 0 { None } else { gr.texture.and_then(&mut *remap_texture) };
             match tex {
                 Some(v) => {
-                    o.w32(at + 0x18, 0);
+                    // The pack tools pre-bake the slot: the id in the high
+                    // u16, the slot's own offset in the low one.  The loader
+                    // overwrites both with the relocated id, but a rebuilt
+                    // pack should look like a shipped one.
+                    o.w32(at + 0x18, ((v & 0xFFFF) << 16) | ((at + 0x18) & 0xFFFF));
                     o.blob.texture_relocs.push(Reloc { slot: at + 0x18, value: v });
                 }
                 None => o.w32(at + 0x18, NO_TEXTURE),
+            }
+            if let Some(s) = gr.shader {
+                // The ShaderHolder treats the slot as a ShadedGeom pointer:
+                // the group base, whose +0x18 half it keeps animated.
+                o.blob.shader_relocs.push(Reloc { slot: at, value: s });
             }
             dls.push((at, std::mem::take(&mut group_dls[k])));
         }
@@ -660,7 +678,8 @@ pub fn read_gc(blob: &Blob, off: u32) -> Result<Model> {
                 .find(|r| r.slot == at as u32 + 0x18)
                 .map(|r| r.value)
                 .or(if b.u32(at + 0x18)? == NO_TEXTURE { None } else { Some(NO_TEXTURE) });
-            classes.push((at, flags & !(F_VB_NORMALS | F_VB_COLOURS | F_VB_BOTH), tex));
+            let shader = blob.shader_relocs.iter().find(|r| r.slot == at as u32).map(|r| r.value);
+            classes.push((at, flags & !(F_VB_NORMALS | F_VB_COLOURS | F_VB_BOTH), tex, shader));
             ensure!(dl_at + 3 <= blob.data.len() && b.0[dl_at] == 0x90, "display list at {dl_at:#x} is not GX_DRAW_TRIANGLES");
             let count = b.u16(dl_at + 1)? as usize;
             ensure!(count.is_multiple_of(3) && count > 0, "display list at {dl_at:#x} has {count} vertices");
@@ -670,8 +689,10 @@ pub fn read_gc(blob: &Blob, off: u32) -> Result<Model> {
         }
 
         let mut groups = Vec::with_capacity(num_groups);
-        for (((at, flags, texture), &dl_at), &count) in classes.iter().zip(&dls).zip(&counts) {
-            let lit = uses_normals(*flags);
+        for (i, &(at, flags, texture, shader)) in classes.iter().enumerate() {
+            let dl_at = dls[i];
+            let count = counts[i];
+            let lit = uses_normals(flags);
             let mut tris = Vec::with_capacity(count / 3);
             let mut tri = [Vertex { pos: [0.0; 3], uv: [0.0; 2], attr: Attr::None, adc: false }; 3];
             for v in 0..count {
@@ -707,10 +728,10 @@ pub fn read_gc(blob: &Blob, off: u32) -> Result<Model> {
                 }
             }
             let tex_opt: Option<u32> = match texture {
-                Some(t) if *flags & F_ENV == 0 && *t != NO_TEXTURE => Some(*t),
+                Some(t) if flags & F_ENV == 0 && t != NO_TEXTURE => Some(t),
                 _ => None,
             };
-            groups.push(Group { flags: *flags, colour: [b.0[at + 4], b.0[at + 5], b.0[at + 6], b.0[at + 7]], blend: b.u16(at + 0x14)?, sort: b.u16(at + 0x16)?, texture: tex_opt, tris });
+            groups.push(Group { flags, colour: [b.0[at + 4], b.0[at + 5], b.0[at + 6], b.0[at + 7]], blend: b.u16(at + 0x14)?, sort: b.u16(at + 0x16)?, texture: tex_opt, shader, tris });
         }
 
         let opt_ptr = |slot: usize| -> Result<Option<usize>> {

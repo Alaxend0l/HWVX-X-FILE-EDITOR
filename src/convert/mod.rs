@@ -4,3 +4,4 @@ pub mod collision;
 pub mod geometry;
 pub mod sound;
 pub mod texture;
+pub mod world;

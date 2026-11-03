@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod car;
 pub mod carwalk;
 pub mod collision;

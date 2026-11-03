@@ -26,6 +26,8 @@ pub const TYPE_WORLD: u32 = 4;
 pub const TYPE_COLLISION: u32 = 5;
 /// Pack type 6: the world's streamed texture page.
 pub const TYPE_TEXTURE: u32 = 6;
+/// Pack type 9: a streamed audio pack (dialogue sound sequences).
+pub const TYPE_AUDIO: u32 = 9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Endian {

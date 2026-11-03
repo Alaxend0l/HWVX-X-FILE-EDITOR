@@ -561,6 +561,175 @@ pub fn build_gc(m: &Model, remap_texture: &mut dyn FnMut(u32) -> Option<u32>) ->
     Ok(o.blob)
 }
 
+/// Big-endian reader over a pack blob (GameCube object data).
+struct Be<'a>(&'a [u8]);
+
+impl Be<'_> {
+    fn u16(&self, off: usize) -> Result<u16> {
+        let s = self.0.get(off..off + 2).context("read past the end of the blob")?;
+        Ok(u16::from_be_bytes([s[0], s[1]]))
+    }
+    fn u32(&self, off: usize) -> Result<u32> {
+        BE.u32_at(self.0, off).context("read past the end of the blob")
+    }
+    fn f32(&self, off: usize) -> Result<f32> {
+        Ok(f32::from_bits(self.u32(off)?))
+    }
+    fn ptr(&self, blob: &Blob, slot: usize) -> Result<usize> {
+        ensure!(blob.pointers.contains(&(slot as u32)), "expected a pointer slot at {slot:#x}");
+        let v = self.u32(slot)? as usize;
+        ensure!(v < blob.data.len(), "pointer at {slot:#x} runs off the blob");
+        Ok(v)
+    }
+}
+
+/// Read a GameCube v183 geometry at `off` in a big-endian pack blob: the exact
+/// inverse of [`build_gc`] for geometry that it produced, and a faithful model
+/// of retail GameCube geometry (see `docs/beta-cars/research/geometry.md` §1).
+/// Group texture slots report the post-reload handle only through
+/// `texture_relocs`, so a textured group's `texture` is the relocation value
+/// recorded in the pack (None when the slot holds the literal
+/// [`NO_TEXTURE`]). Shadow-volume groups (§1.7) are not decoded.
+pub fn read_gc(blob: &Blob, off: u32) -> Result<Model> {
+    let b = Be(&blob.data);
+    let g = off as usize;
+    ensure!(b.u16(g)? == GC_MAGIC, "no GameCube geometry at {off:#x} (magic {:04x})", b.u16(g)?);
+    let num_lods = b.u16(g + 2)? as usize;
+    ensure!((1..=8).contains(&num_lods), "implausible LOD count {num_lods}");
+    let kind = b.u16(g + 4)? as u32;
+    ensure!(kind == 0, "skinned geometry (kind {kind}) is not supported");
+    let lods_at = b.ptr(blob, g + 8)?;
+    let dist_at = b.ptr(blob, g + 0xC)?;
+    let lod = |l: usize, field: usize| -> Result<usize> { b.ptr(blob, lods_at + 0x18 * l + field) };
+
+    let mut lod_distances = Vec::with_capacity(num_lods);
+    for l in 0..num_lods {
+        lod_distances.push(b.f32(dist_at + 4 * l)?);
+    }
+    let f3x = |base: usize| -> Result<[f32; 3]> { Ok([b.f32(base)?, b.f32(base + 4)?, b.f32(base + 8)?]) };
+    let bbox_min = f3x(g + 0x10)?;
+    let bbox_max = f3x(g + 0x20)?;
+
+    let mut lods = Vec::with_capacity(num_lods);
+    for l in 0..num_lods {
+        ensure!(b.u16(lods_at + 0x18 * l)? == 0, "LOD {l} starts with a non-zero word");
+        let num_groups = b.u16(lods_at + 0x18 * l + 2)? as usize;
+        ensure!((1..=4096).contains(&num_groups), "implausible group count {num_groups}");
+        let groups_at = lod(l, 8)?;
+        let vb_at = lod(l, 0xC)?;
+
+        // Vertex buffer: four back-to-back arrays. Each ends where the next
+        // non-empty one starts, or at `size` for the last one.
+        let uv_off = b.u32(vb_at)? as usize;
+        let clr_off = b.u32(vb_at + 4)? as usize;
+        let nrm_off = b.u32(vb_at + 8)? as usize;
+        let size = b.u32(vb_at + 0xC)? as usize;
+        ensure!(uv_off.is_multiple_of(12), "uvOff {uv_off} is not a whole number of positions");
+        let n_pos = uv_off / 12;
+        ensure!(
+            vb_at + size <= blob.data.len() && size >= 0x10 + uv_off,
+            "vertex buffer at {vb_at:#x} claims size {size}"
+        );
+        let pos_at = vb_at + 0x10;
+        let end_after = |start: usize, next: Option<usize>| -> Result<usize> {
+            let end = next.unwrap_or(size - 0x10);
+            ensure!(end >= start && start.is_multiple_of(4), "bad vertex array range {start}..{end}");
+            Ok(end)
+        };
+        let uv_end = end_after(uv_off, if clr_off != 0 { Some(clr_off) } else if nrm_off != 0 { Some(nrm_off) } else { None })?;
+        let clr_end = end_after(clr_off, if nrm_off != 0 { Some(nrm_off) } else { None })?;
+        let n_uv = (uv_end - uv_off) / 8;
+        let n_clr = if clr_off != 0 { (clr_end - clr_off) / 4 } else { 0 };
+        let n_nrm = if nrm_off != 0 { (size - 0x10 - nrm_off) / 12 } else { 0 };
+
+        // Groups: read fixed fields, then display lists (counts come first so
+        // the normal/colour array bounds are known).
+        let mut classes = Vec::with_capacity(num_groups);
+        let mut dls = Vec::with_capacity(num_groups);
+        let mut counts = Vec::with_capacity(num_groups);
+        for k in 0..num_groups {
+            let at = groups_at + 0x20 * k;
+            let flags = b.u16(at + 2)?;
+            ensure!(flags & F_SHADOW == 0, "shadow-volume groups are not decoded (group {k})");
+            let dl_size = b.u32(at + 0x10)? as usize;
+            let dl_at = b.ptr(blob, at + 0x1C)?;
+            ensure!(dl_at + dl_size <= blob.data.len(), "display list at {dl_at:#x} runs off the blob");
+            let tex = blob
+                .texture_relocs
+                .iter()
+                .find(|r| r.slot == at as u32 + 0x18)
+                .map(|r| r.value)
+                .or(if b.u32(at + 0x18)? == NO_TEXTURE { None } else { Some(NO_TEXTURE) });
+            classes.push((at, flags & !(F_VB_NORMALS | F_VB_COLOURS | F_VB_BOTH), tex));
+            ensure!(dl_at + 3 <= blob.data.len() && b.0[dl_at] == 0x90, "display list at {dl_at:#x} is not GX_DRAW_TRIANGLES");
+            let count = b.u16(dl_at + 1)? as usize;
+            ensure!(count.is_multiple_of(3) && count > 0, "display list at {dl_at:#x} has {count} vertices");
+            ensure!(3 + 6 * count <= dl_size && dl_size.is_multiple_of(32), "display list size {dl_size} for {count} vertices");
+            counts.push(count);
+            dls.push(dl_at + 3);
+        }
+
+        let mut groups = Vec::with_capacity(num_groups);
+        for (((at, flags, texture), &dl_at), &count) in classes.iter().zip(&dls).zip(&counts) {
+            let lit = uses_normals(*flags);
+            let mut tris = Vec::with_capacity(count / 3);
+            let mut tri = [Vertex { pos: [0.0; 3], uv: [0.0; 2], attr: Attr::None, adc: false }; 3];
+            for v in 0..count {
+                let q = dl_at + 6 * v;
+                let p = b.u16(q)? as usize;
+                let second = b.u16(q + 2)? as usize;
+                let t = b.u16(q + 4)? as usize;
+                ensure!(p < n_pos, "position index {p} out of range ({n_pos})");
+                let pos = f3x(pos_at + 12 * p)?;
+                let uv = if t < n_uv {
+                    [b.f32(pos_at + uv_off + 8 * t)?, b.f32(pos_at + uv_off + 8 * t + 4)?]
+                } else if lit {
+                    // Env groups (the only ones without a UV array) read this
+                    // index as a colour index; its value is unused.
+                    [0.0; 2]
+                } else {
+                    bail!("uv index {t} out of range ({n_uv})")
+                };
+                let attr = if lit {
+                    ensure!(second < n_nrm, "normal index {second} out of range ({n_nrm})");
+                    let q = pos_at + nrm_off + 12 * second;
+                    Attr::Normal([b.f32(q)?, b.f32(q + 4)?, b.f32(q + 8)?])
+                } else if clr_off != 0 {
+                    ensure!(second < n_clr, "colour index {second} out of range ({n_clr})");
+                    let q = pos_at + clr_off + 4 * second;
+                    Attr::Colour([b.0[q], b.0[q + 1], b.0[q + 2], b.0[q + 3]])
+                } else {
+                    Attr::None
+                };
+                tri[v % 3] = Vertex { pos, uv, attr, adc: false };
+                if v % 3 == 2 {
+                    tris.push(tri);
+                }
+            }
+            let tex_opt: Option<u32> = match texture {
+                Some(t) if *flags & F_ENV == 0 && *t != NO_TEXTURE => Some(*t),
+                _ => None,
+            };
+            groups.push(Group { flags: *flags, colour: [b.0[at + 4], b.0[at + 5], b.0[at + 6], b.0[at + 7]], blend: b.u16(at + 0x14)?, sort: b.u16(at + 0x16)?, texture: tex_opt, tris });
+        }
+
+        let opt_ptr = |slot: usize| -> Result<Option<usize>> {
+            if blob.pointers.contains(&(slot as u32)) {
+                Ok(Some(b.u32(slot)? as usize))
+            } else {
+                Ok(None)
+            }
+        };
+        let names = match opt_ptr(lods_at + 0x18 * l + 0x14)? {
+            Some(v) => name_list(&blob.data, v)?,
+            None => vec![],
+        };
+        lods.push(Lod { names, groups });
+    }
+
+    Ok(Model { kind, lod_distances, bbox_min, radius_1c: b.f32(g + 0x1C)?, bbox_max, lods })
+}
+
 /// Build a PC geometry (OpenGL): per LOD one shared vertex array (position,
 /// UV, normal, colour per vertex) and per group a u16 triangle list drawn with
 /// `glDrawElements(GL_TRIANGLES)`. Little-endian, 16-byte aligned.

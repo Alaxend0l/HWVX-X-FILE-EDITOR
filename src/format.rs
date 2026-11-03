@@ -20,6 +20,12 @@ pub const TOC_ENTRY_LEN: usize = 24;
 
 /// Pack type 7: a world quadrant's streamed geometry ("quad pack").
 pub const TYPE_GEOMETRY: u32 = 7;
+/// Pack type 4: the world block (world objects, quadrant table).
+pub const TYPE_WORLD: u32 = 4;
+/// Pack type 5: the world's streamed collision.
+pub const TYPE_COLLISION: u32 = 5;
+/// Pack type 6: the world's streamed texture page.
+pub const TYPE_TEXTURE: u32 = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Endian {

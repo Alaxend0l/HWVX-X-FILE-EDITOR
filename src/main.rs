@@ -639,11 +639,10 @@ fn cmd_port_world(beta: &Path, geo: &Path, col: &Path, tex: &Path, world: &Path)
     use hwvx_xfile::convert::{collision, world as wconv};
     use hwvx_xfile::format::{PackType, TYPE_COLLISION, TYPE_GEOMETRY, TYPE_TEXTURE, TYPE_WORLD};
 
-    let bp = pack_platform(beta)?;
-    if !bp.is_beta() {
-        bail!("{} is a {bp} archive; port-world converts PS2-prototype world archives", beta.display());
-    }
     let bm = read_manifest(beta)?;
+    if !bm.platform.is_beta() {
+        bail!("{} is a {} archive; port-world converts PS2-prototype world archives", beta.display(), bm.platform);
+    }
     let mut gm = read_manifest(geo)?;
     let mut cm = read_manifest(col)?;
     let mut tm = read_manifest(tex)?;

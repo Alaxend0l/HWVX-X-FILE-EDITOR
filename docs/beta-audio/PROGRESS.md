@@ -113,4 +113,31 @@ ids, donor references, and rebuilt PCM16 descriptors (rate > 0, loop byte
 offsets, samples inside the region, stored bytes = decoded samples × 2).
 End-to-end CLI run: all 28 archives extracted, 14 `port-audio` runs —
 149 packs, 149 sequences, 23 988 860 samples (~48 MB of PCM16) installed —
-14 archives repacked and `hwvx-x verify --platform gc` clean on every one.
+14 archives repacked and `hwvx-x verify --platform gc` clean on every one,
+then repacked over the fourteen game-tree archives (retail originals kept
+as `HWB_Mxx.xgc.bak`; the installed files are MD5-identical to the recipe
+output).
+
+## 7. Boot check (2026-11-03)
+
+With the converted archives installed, the game boots through the three
+logo movies into the title menu, and scripted `HWVX_AUTOINPUT` input takes
+it from there into story mode, through a race on the converted CH1_L2
+world (which loads the ported world packs mid-run), past the win, and into
+a second race — no crash, no new errors.
+
+The `Audio :: FreeA_ - Invalid pointer: 7xxxxx` messages that print at
+audio init are **pre-existing**, not caused by the converted archives:
+booting with the retail `.bak` archives swapped back in prints the same
+seven-message pattern at the same point.
+
+The audible check — *hearing* the prototype dialogue — is deferred, and
+honestly reported as such: a type-9 data-pack load (`data pack HWB_Mxx:
+type 9`, logged by `DataPack_LoadFile`) never fires in any boot observed,
+with or without the port. Those loads are only requested from
+`InterfaceManager.c:771`, i.e. from sound lists inside *interface* pack
+headers, and the retail menu/race flow never touches one. The only game
+file referencing the `HWB_Mxx` names is `HW_brief.xgc` (14 interface
+packs — the briefing screens), which the retail build never loads by name
+either; getting the briefing interfaces up is the interface milestone, and
+that is where this audio becomes audible.

@@ -45,6 +45,12 @@ overwrite an existing file. Pass `--force` to override either. With `--force`,
 | `hwvx-x render-car <GC car pack> out.tga` | Textured preview render of a GameCube car |
 | `hwvx-x export-gltf <GC pack or archive folder> [out]` | Export models to glTF binary (`.glb`) with embedded textures |
 
+### World tools
+
+| Command | What it does |
+|---------|--------------|
+| `hwvx-x port-world <prototype level extract> --geo <GC wN_geo extract> --col <GC wN_col extract> --tex <GC wN_tex extract> --world <GC level extract>` | Convert a PS2-prototype world level (quadrant geometry, world textures, collision) into the extracted GameCube world archives |
+
 ### Model export (glTF)
 
 `hwvx-x export-gltf <GC pack or archive folder> [out]` writes GameCube models
@@ -78,7 +84,9 @@ hwvx-x export-gltf work/w1_geo w1_glb --textures work/w1_tex --share work/HW_sha
 
 See [`docs/beta-cars/`](docs/beta-cars/README.md) for the full walkthrough
 (adding Fandango, Sweet 16 II and Jester from the PS2 prototype) and the
-format research behind it.
+format research behind it, and [`docs/beta-worlds/`](docs/beta-worlds/README.md)
+for the world-level port (putting the prototype's CH1_L2 into the shipped
+GameCube level).
 
 ## Extracted layout
 

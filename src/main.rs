@@ -104,6 +104,27 @@ enum Cmd {
         #[arg(short, long)]
         force: bool,
     },
+    /// Convert a PS2-prototype world level (e.g. CH1_L2) into extracted
+    /// GameCube world archives: the quad geometry packs, the world texture
+    /// pack, the collision pack, and the world pack's quadrant table that
+    /// points the streaming loader at the converted packs. The extracts are
+    /// rewritten in place; rebuild the archives afterwards with `pack`.
+    PortWorld {
+        /// Extracted prototype world archive folder (e.g. work/beta/CH1_L2)
+        beta: PathBuf,
+        /// Extracted GameCube geometry archive folder (worlds_/geo_/w1_geo)
+        #[arg(long)]
+        geo: PathBuf,
+        /// Extracted GameCube collision archive folder (worlds_/col_/w1_col)
+        #[arg(long)]
+        col: PathBuf,
+        /// Extracted GameCube world texture archive folder (worlds_/tex_/w1_tex)
+        #[arg(long)]
+        tex: PathBuf,
+        /// Extracted GameCube world host archive (worlds_/sp_/chal1_/ch1_l2)
+        #[arg(long)]
+        world: PathBuf,
+    },
     /// Add cars to the car lists of extracted GameCube archives (HW_IPack car
     /// select: range, names, thumbnails; worlds: results-screen names)
     Roster {
@@ -236,6 +257,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::RenderCar { pack, output, size, yaw, pitch, stretch, env } => cmd_render_car(&pack, &output, size, yaw, pitch, stretch, env.as_deref()),
         Cmd::Roster { ipack, names, hint, cars, thumbs, stretch, env } => cmd_roster(&ipack, &names, &hint, cars.as_deref(), &thumbs, stretch, env.as_deref()),
         Cmd::PortCar { beta, into, id, donor, imports, view_offset, force } => cmd_port_car(&beta, &into, id, donor, &imports, view_offset, force),
+        Cmd::PortWorld { beta, geo, col, tex, world } => cmd_port_world(&beta, &geo, &col, &tex, &world),
     }
 }
 
@@ -594,6 +616,140 @@ fn cmd_port_car(beta: &Path, into: &Path, id: u32, donor: Option<PathBuf>, impor
     }
     out!("now rebuild the archive: hwvx-x pack {} <output .xgc>", into.display());
     Ok(ExitCode::SUCCESS)
+}
+
+fn read_manifest(dir: &Path) -> Result<hwvx_xfile::Manifest> {
+    let path = dir.join(MANIFEST_FILE);
+    parse_manifest(&fs::read(&path).with_context(|| format!("reading {}", path.display()))?).with_context(|| path.display().to_string())
+}
+
+/// Keep a copy of the GameCube extracted pack folder next to it
+/// (`<name>.bak`) before overwriting it.  Re-running keeps the first copy:
+/// the true original extract.
+fn backup_pack(dir: &Path) -> Result<()> {
+    let bak = PathBuf::from(format!("{}.bak", dir.display()));
+    if dir.exists() && !bak.exists() {
+        fs::rename(dir, &bak)?;
+    }
+    Ok(())
+}
+
+fn cmd_port_world(beta: &Path, geo: &Path, col: &Path, tex: &Path, world: &Path) -> Result<ExitCode> {
+    use hwvx_xfile::blob::Blob;
+    use hwvx_xfile::convert::{collision, world as wconv};
+    use hwvx_xfile::format::{PackType, TYPE_COLLISION, TYPE_GEOMETRY, TYPE_TEXTURE, TYPE_WORLD};
+
+    let bp = pack_platform(beta)?;
+    if !bp.is_beta() {
+        bail!("{} is a {bp} archive; port-world converts PS2-prototype world archives", beta.display());
+    }
+    let bm = read_manifest(beta)?;
+    let mut gm = read_manifest(geo)?;
+    let mut cm = read_manifest(col)?;
+    let mut tm = read_manifest(tex)?;
+    let mut wm = read_manifest(world)?;
+    for (what, dir, m) in [("&geo", geo, &gm), ("&col", col, &cm), ("&tex", tex, &tm), ("&world", world, &wm)] {
+        if m.platform != Platform::Gc {
+            bail!("{what} {} is a {} archive; port-world installs into extracted GameCube archives", dir.display(), m.platform);
+        }
+    }
+
+    // prototype and GameCube quad packs pair up slot by slot: the world
+    // pack's quadrant table lists the quadrants, and both archives list
+    // their quad packs in that same order (tests/orig_worlds.rs).
+    let bqs: Vec<&hwvx_xfile::ManifestEntry> = bm.entries.iter().filter(|e| e.kind == PackType(TYPE_GEOMETRY)).collect();
+    let gqs: Vec<usize> = gm.entries.iter().enumerate().filter(|(_, e)| e.kind == PackType(TYPE_GEOMETRY)).map(|(i, _)| i).collect();
+    if bqs.is_empty() || bqs.len() != gqs.len() {
+        bail!("{} has {} prototype quad packs but {} has {}; the world host needs one GameCube quad pack per prototype slot to replace", beta.display(), bqs.len(), geo.display(), gqs.len());
+    }
+
+    // geometry id space: donor table ids are kept positionally, extra
+    // prototype models get fresh ids above every GameCube id.
+    let mut gc_quads = Vec::with_capacity(gqs.len());
+    for &i in &gqs {
+        gc_quads.push(read_split(&geo.join(&gm.entries[i].path))?);
+    }
+    let donors: Vec<Vec<u32>> = gc_quads.iter().map(wconv::donor_geom_ids).collect::<Result<_>>()?;
+    let all_ids: Vec<u32> = donors.iter().flatten().copied().collect();
+    let mut next_id = wconv::new_geom_id_base(&all_ids);
+
+    let mut patches = Vec::with_capacity(bqs.len());
+    out!("quad packs: {} prototype slots into {} GameCube donors", bqs.len(), gqs.len());
+    for (slot, be) in bqs.iter().enumerate() {
+        let gi = gqs[slot];
+        let bpack = read_split(&beta.join(&be.path))?;
+        let count = wconv::scan_heads(&Blob::from_split(hwvx_xfile::format::Endian::Little, &bpack)).len();
+        let ids: Vec<u32> = (0..count)
+            .map(|k| if k < donors[slot].len() { donors[slot][k] } else { let id = next_id; next_id += 1; id })
+            .collect();
+        let (out, rep) = wconv::convert_quad(&bpack, &gc_quads[slot], &ids)
+            .with_context(|| format!("quad slot {slot}: {} -> {}", be.path, gm.entries[gi].path))?;
+        backup_pack(&geo.join(&gm.entries[gi].path))?;
+        write_split(&geo.join(&gm.entries[gi].path), &out)?;
+        // the manifest sub_id becomes the TOC id the streaming loader matches
+        // against the world record (geoms << 16 | quad id): both halves move.
+        let old = gm.entries[gi].sub_id;
+        gm.entries[gi].sub_id = (rep.models as u32) << 16 | old & 0xFFFF;
+        gm.entries[gi].summary = hwvx_xfile::pack::summary(&out);
+        patches.push(wconv::QuadPatch { num_geoms: rep.models as u32, pack_id: gm.entries[gi].sub_id });
+        out!("  slot {slot:2}  {} -> {}  models {:2} -> {:2}  texrelocs {}  pack id {:#010x} -> {:#010x}", be.path, gm.entries[gi].path, old >> 16, rep.models, rep.texture_relocs, old, gm.entries[gi].sub_id);
+    }
+
+    // world texture pack: rebuilt GameCube-style around the donor's shaders.
+    let btex = only_entry(&bm, TYPE_TEXTURE, "world texture", beta)?;
+    let gtex_i = only_entry(&tm, TYPE_TEXTURE, "world texture", tex)?;
+    let (tout, trep) = wconv::convert_textures(&read_split(&beta.join(&bm.entries[btex].path))?, &read_split(&tex.join(&tm.entries[gtex_i].path))?)
+        .with_context(|| format!("world textures: {} -> {}", bm.entries[btex].path, tm.entries[gtex_i].path))?;
+    backup_pack(&tex.join(&tm.entries[gtex_i].path))?;
+    write_split(&tex.join(&tm.entries[gtex_i].path), &tout)?;
+    tm.entries[gtex_i].summary = hwvx_xfile::pack::summary(&tout);
+    out!("world textures: {} textures re-encoded, {:#x} bytes of GameCube shader tail kept", trep.textures, trep.tail_bytes);
+
+    // collision pack: layout is identical, the object graph swaps fields.
+    let bcol = only_entry(&bm, TYPE_COLLISION, "collision", beta)?;
+    let gcol_i = only_entry(&cm, TYPE_COLLISION, "collision", col)?;
+    let (cout, crep) = collision::convert(&read_split(&beta.join(&bm.entries[bcol].path))?, &collision::Options { donor: &read_split(&col.join(&cm.entries[gcol_i].path))?, platform: Platform::Gc })
+        .with_context(|| format!("collision: {} -> {}", bm.entries[bcol].path, cm.entries[gcol_i].path))?;
+    backup_pack(&col.join(&cm.entries[gcol_i].path))?;
+    write_split(&col.join(&cm.entries[gcol_i].path), &cout)?;
+    cm.entries[gcol_i].summary = hwvx_xfile::pack::summary(&cout);
+    out!("collision: cells {} nodes {} edges {} materials {} inline textures {} sounds {} ({} fixed)", crep.cells, crep.nodes, crep.edges, crep.materials, crep.textures, crep.sounds, crep.sound_fixes);
+    for n in &crep.notes {
+        out!("  note: {n}");
+    }
+
+    // world host: point the quadrant records at the converted packs.
+    let gw_i = only_entry(&wm, TYPE_WORLD, "world", world)?;
+    let wout = wconv::patch_world(&read_split(&world.join(&wm.entries[gw_i].path))?, &patches)
+        .context("world quadrant table: the pack's records must pair with the quad packs slot by slot")?;
+    backup_pack(&world.join(&wm.entries[gw_i].path))?;
+    write_split(&world.join(&wm.entries[gw_i].path), &wout)?;
+    wm.entries[gw_i].summary = hwvx_xfile::pack::summary(&wout);
+    out!("world pack: {} quadrant records now stream the converted quad packs", patches.len());
+
+    for (dir, m) in [(geo, &gm), (col, &cm), (tex, &tm), (world, &wm)] {
+        fs::write(&dir.join(MANIFEST_FILE), hwvx_xfile::json_bytes(m)?)?;
+    }
+    out!("rebuild the archives (the .bak copies hold the originals):");
+    for (dir, archive) in [
+        (geo, "worlds_/geo_/w1_geo.xgc"),
+        (col, "worlds_/col_/w1_col.xgc"),
+        (tex, "worlds_/tex_/w1_tex.xgc"),
+        (world, "worlds_/sp_/chal1_/ch1_l2.xgc"),
+    ] {
+        out!("  hwvx-x pack --force {} orig/files/{archive}", dir.display());
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The single entry of `kind` in a manifest: index in the manifest, or an
+/// error when the archive has none or more than one.
+fn only_entry(m: &hwvx_xfile::Manifest, kind: u32, what: &str, dir: &Path) -> Result<usize> {
+    let hits: Vec<usize> = m.entries.iter().enumerate().filter(|(_, e)| e.kind == hwvx_xfile::format::PackType(kind)).map(|(i, _)| i).collect();
+    if hits.len() != 1 {
+        bail!("{} has {} {what} packs, expected exactly one", dir.display(), hits.len());
+    }
+    Ok(hits[0])
 }
 
 fn cmd_roster(ipack: &Path, names: &[String], hint: &str, cars: Option<&Path>, thumbs: &[String], stretch: bool, env: Option<&Path>) -> Result<ExitCode> {

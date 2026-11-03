@@ -125,6 +125,21 @@ enum Cmd {
         #[arg(long)]
         world: PathBuf,
     },
+    /// Convert PS2-prototype audio packs (dialogue sound sequences) into an
+    /// extracted GameCube audio archive: prototype packs pair with GameCube
+    /// packs by TOC id, each pair swaps the sequence graph and rebuilds the
+    /// sound region as big-endian PCM16. The GameCube extract is rewritten in
+    /// place; rebuild the archive afterwards with `pack`. Prototype-only ids
+    /// (no GameCube pack with that id) are reported and skipped.
+    PortAudio {
+        /// Extracted GameCube audio archive folder (e.g. work/gc/HWB_M01)
+        gc: PathBuf,
+        /// Extracted prototype audio archive folders (e.g. work/beta/HWB_M01),
+        /// one per GameCube archive; prototype packs pair with GameCube packs
+        /// by TOC id
+        #[arg(long = "beta", required = true)]
+        beta: Vec<PathBuf>,
+    },
     /// Add cars to the car lists of extracted GameCube archives (HW_IPack car
     /// select: range, names, thumbnails; worlds: results-screen names)
     Roster {
@@ -258,6 +273,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Roster { ipack, names, hint, cars, thumbs, stretch, env } => cmd_roster(&ipack, &names, &hint, cars.as_deref(), &thumbs, stretch, env.as_deref()),
         Cmd::PortCar { beta, into, id, donor, imports, view_offset, force } => cmd_port_car(&beta, &into, id, donor, &imports, view_offset, force),
         Cmd::PortWorld { beta, geo, col, tex, world } => cmd_port_world(&beta, &geo, &col, &tex, &world),
+        Cmd::PortAudio { gc, beta } => cmd_port_audio(&gc, &beta),
     }
 }
 
@@ -738,6 +754,79 @@ fn cmd_port_world(beta: &Path, geo: &Path, col: &Path, tex: &Path, world: &Path)
     ] {
         out!("  hwvx-x pack --force {} orig/files/{archive}", dir.display());
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_port_audio(gc: &Path, betas: &[PathBuf]) -> Result<ExitCode> {
+    use hwvx_xfile::convert::audio;
+    use hwvx_xfile::format::{PackType, TYPE_AUDIO};
+
+    let mut gm = read_manifest(gc)?;
+    if gm.platform != Platform::Gc {
+        bail!("{} is a {} archive; port-audio installs into extracted GameCube audio archives", gc.display(), gm.platform);
+    }
+    // prototype packs pair with GameCube packs by TOC id (the audio number).
+    let mut bm = Vec::with_capacity(betas.len());
+    let mut src: std::collections::BTreeMap<u32, (usize, usize)> = Default::default();
+    for (bi, dir) in betas.iter().enumerate() {
+        let m = read_manifest(dir)?;
+        if !m.platform.is_beta() {
+            bail!("{} is a {} archive; port-audio converts PS2-prototype audio archives", dir.display(), m.platform);
+        }
+        for (ei, e) in m.entries.iter().enumerate() {
+            if e.kind != PackType(TYPE_AUDIO) {
+                continue;
+            }
+            if let Some((obi, _)) = src.insert(e.id, (bi, ei)) {
+                bail!("audio_{}, from both {} and {}, uses the same id; a GameCube pack can take only one prototype pack per id", e.id, betas[obi].display(), dir.display());
+            }
+        }
+        bm.push(m);
+    }
+
+    let gc_ids: std::collections::BTreeSet<u32> = gm.entries.iter().filter(|e| e.kind == PackType(TYPE_AUDIO)).map(|e| e.id).collect();
+    for (bi, m) in bm.iter().enumerate() {
+        let stray: Vec<u32> = m.entries.iter().filter(|e| e.kind == PackType(TYPE_AUDIO) && !gc_ids.contains(&e.id)).map(|e| e.id).collect();
+        if !stray.is_empty() {
+            out!("  {} skipped (no GameCube pack with this id in {}): {}", betas[bi].display(), gc.display(), stray.iter().map(|id| format!("audio_{id}")).collect::<Vec<_>>().join(", "));
+        }
+    }
+
+    let mut converted = 0usize;
+    let (mut sequences, mut keys, mut sounds, mut samples) = (0usize, 0usize, 0usize, 0usize);
+    for gi in 0..gm.entries.len() {
+        if gm.entries[gi].kind != PackType(TYPE_AUDIO) {
+            continue;
+        }
+        let id = gm.entries[gi].id;
+        let Some((bi, ei)) = src.get(&id).copied() else { continue };
+        let be = &bm[bi].entries[ei];
+        let bpack = read_split(&betas[bi].join(&be.path))?;
+        let donor = read_split(&gc.join(&gm.entries[gi].path))?;
+        let (out, rep) = audio::convert(&bpack, &audio::Options { donor: &donor, platform: Platform::Gc, seq_id: id })
+            .with_context(|| format!("audio_{id}: {} -> {}", be.path, gm.entries[gi].path))?;
+        backup_pack(&gc.join(&gm.entries[gi].path))?;
+        write_split(&gc.join(&gm.entries[gi].path), &out)?;
+        gm.entries[gi].summary = hwvx_xfile::pack::summary(&out);
+        converted += 1;
+        sequences += rep.sequences;
+        keys += rep.keys;
+        sounds += rep.sounds;
+        samples += rep.samples;
+        out!("  audio_{id:<3} {} -> {}  seqs {} keys {} sounds {} samples {}", be.path, gm.entries[gi].path, rep.sequences, rep.keys, rep.sounds, rep.samples);
+        for n in &rep.notes {
+            out!("    note: {n}");
+        }
+    }
+    if converted == 0 {
+        bail!("{} shares no audio ids with {} of these archives: nothing to convert", gm.entries.len(), betas.len());
+    }
+
+    fs::write(gc.join(MANIFEST_FILE), hwvx_xfile::json_bytes(&gm)?)?;
+    let archive = gc.file_name().map_or_else(|| "HWB_Mxx".into(), |n| n.to_string_lossy().into_owned());
+    out!("converted {converted} packs: sequences {sequences} keys {keys} sounds {sounds} samples {samples}");
+    out!("rebuild the archive (the .bak copies hold the originals):");
+    out!("  hwvx-x pack --force {} orig/files/audio_/{archive}.xgc", gc.display());
     Ok(ExitCode::SUCCESS)
 }
 

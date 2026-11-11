@@ -165,8 +165,12 @@ So `.xdl` splits by kind:
   per car.
 * Sources (mods) stay one car per pack; sharing happens only in compiled output.
 
-**Open:** measure the same across worlds and items; the share pack's existing exports could seed
-the shared store.
+Measured since ([`components.md`](components.md)): the 6% above is over whole blobs, geometry
+included, and car geometry never repeats. Without it, the 33 cars' object graphs hold 3.9 MB, of
+which 1.7 MB are copies within the same pack, 2.0 MB also occur in another car and only 0.23 MB
+are distinct; across worlds, interface scripts (pause menus, HUDs: 20 MB → 0.27 MB), effects
+(4.5 MB → 0.22 MB), sound sequences and world props repeat most. That is what §13's components
+are built from.
 
 ## 5. Loading in the port
 

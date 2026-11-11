@@ -64,3 +64,6 @@ dkms.conf
 
 # Rust
 target/
+
+# Visual C++ 6.0, for building HWVX-PC-Decomp (not ours to redistribute)
+MSVC600/

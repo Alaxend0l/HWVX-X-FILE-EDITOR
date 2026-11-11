@@ -3,10 +3,13 @@
 	url = git@github.com:Alaxend0l/HWVX-GC-Decomp.git
 [submodule "HWVX-SDL"]
 	path = HWVX-SDL
-	url = git@github.com:Alaxend0l/HWVX-SDL.git
+	url = https://github.com/Alaxend0l/HWVX-SDL
 [submodule "Pac-Kart-Documentation"]
 	path = Pac-Kart-Documentation
 	url = https://github.com/Pac-Kart/Pac-Kart-Documentation
 [submodule "HWVX-PC-Decomp"]
 	path = HWVX-PC-Decomp
 	url = git@github.com:Alaxend0l/HWVX-PC-Decomp.git
+[submodule "HWVX-ALL-Decomp"]
+	path = HWVX-ALL-Decomp
+	url = git@github.com:Alaxend0l/HWVX-ALL-Decomp.git

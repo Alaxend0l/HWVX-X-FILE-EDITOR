@@ -59,7 +59,7 @@ XdlSection[numSections]         0x20 each
   u32   id                      the BrainCore pack type/id it belongs to (TOC order)
   u64   offset, size            in the file
   u32   rawSize                 when compressed
-  u32   compression             0 none, 1 zstd   (Open: worth it? see §10)
+  u32   compression             0 none, 1 zstd   (Open: worth it? see §11)
   u32   align
 ```
 
@@ -320,7 +320,84 @@ not assumed: [`ultimate.md`](ultimate.md) holds the rule table and the numbers b
   byte (and so render the same frames); a substituted asset must decode and match its pair within
   the pairing threshold.
 
-## 10. Open questions
+## 10. Source projects: what people edit
+
+The compiled `.xdl` is for the port to load fast; nobody edits it. What people work with (new
+cars, music, events, missions, worlds, mods, and ports to other engines) is a **source project**:
+a folder of readable text that the compiler turns into `.xdl`. Godot's split is the model: text
+scenes and resources under version control, an import cache beside them.
+
+### 10.1 Layout and file formats
+
+* **JSON for structure, standard formats for bulk data.** Objects, tuning, links and scripts are
+  JSON; the data no one reads as numbers keeps its usual format: models **glTF 2.0** (skinning
+  included; Blender reads and writes it), textures **PNG** (or **KTX2** when already compressed),
+  sound **WAV/FLAC/OGG**, music **`.mid`** with a JSON instrument bank naming its samples.
+* **One file per object.** A car is a folder (`car.json`, its model, textures, sounds); a world
+  a folder of its pieces, triggers and spawn points. Small files diff and merge cleanly.
+* **JSONC** (comments, trailing commas) so tuning values can be annotated. Every file starts with
+  `"$schema"` and `"format_version"`.
+* **Text tables per language** (`strings/en.json`, `strings/fr.json`), referenced by key; no text
+  inline in objects.
+* **Engine-neutral.** A project describes the game (a car, its handling, its parts), not the
+  port's memory; the port's layout exists only in compiled `.xdl`, so another engine could read
+  a project.
+
+### 10.2 Links
+
+* **`uid://`** for the project's own assets, as Godot does: a random 64-bit id stored in each
+  asset (or a sidecar for binary files), a project table from id to path, paths only a hint. A
+  file can move or be renamed without breaking a link.
+* **`base://`** for the player's game data: the structural ids of §8.1
+  (`base://HW_Cars/car_5/texture/3`) with per-release fingerprints. A project never contains base
+  data, only these references (§8).
+* The two namespaces never mix: a `uid://` is always something the project ships, a `base://`
+  never is. The packaging check (§8) relies on it.
+
+### 10.3 Inheritance, overrides, mods
+
+* `"extends": "base://HW_Cars/car_5"` (or a `uid://`): an object takes everything from its parent
+  and overrides only the fields it names, as Godot's inherited scenes do. A new car is a few
+  changed fields and its own art.
+* A **mod** is a set of overlays on objects it doesn't own: JSON Merge Patch (RFC 7396) per
+  object, plus its own new objects. Mods have an explicit load order, and two mods changing the
+  same field are reported as a conflict, not resolved silently.
+
+### 10.4 Schemas from the decomp
+
+* Field names come from the BrainCore structs (`maxHealth`, not `+0x5C`). The **JSON Schema for
+  each object type is generated from the C struct definitions**, so editor, compiler and port
+  share one source of truth. Fields nobody has decoded yet stay as explicit raw hex in the JSON,
+  so an extract and rebuild round trip is still byte-exact.
+* Schemas give editors autocomplete and inline errors; a `format_version` bump comes with a
+  migration step in the tools.
+
+### 10.5 Ids the game needs
+
+The game addresses cars, worlds, packs and items by number, and **save files store those
+numbers**. The compiler assigns them from uids and records the assignment in **`ids.lock`**
+(committed with the project), so a car keeps its number across builds and installing a mod does
+not shuffle anyone's save. Base content keeps its retail numbers.
+
+### 10.6 Events and missions
+
+The game's scripting is already data (trigger types, action functions, event sequences:
+`Trigger.c`, `Action.c`, `EventSequence.c`). In a project they are named trigger and action types
+with their parameters and uid references, validated by schema. A visual graph editor can be built
+on that later without changing the format.
+
+### 10.7 Building and checking
+
+* **Deterministic**: the same project gives byte-identical `.xdl`; the cache is keyed by hashes
+  of the inputs.
+* **Errors at `file:line`**, naming the field; the engine's limits (33 cars, 0x200 textures, 64
+  voices, the 8-car arrays) are checked at compile time instead of found as crashes.
+* **Round trip**: extract a release to a project (locally, from the player's own copy) and
+  compile it back; it must equal the direct build. That proves the project format loses nothing.
+* **Hot reload** in development: the port watches a project folder, recompiles what changed and
+  reloads that pack, so tuning is edit, save, drive.
+
+## 11. Open questions
 
 * Compression: zstd per section costs load CPU but saves disk. Data is ~1 GB per release
   uncompressed; worth measuring before deciding.

@@ -574,7 +574,8 @@ preferences folder elsewhere for tests.
   read.
 * **Ids** (`Port_SaveIds.c`, one table): cars `base://HW_Cars/car_<n>` (the car packs);
   tracks and items are numbers the MCP script gives events and items, not packs, so
-  `base://mcp/track/<n>` and `base://mcp/item/<n>`. The chosen vehicle and item are ids too.
+  `base://mcp/track/<n>` and `base://mcp/item/<n>` (confirmed 2026-11-11). The chosen vehicle
+  and item are ids too.
   `ids.lock` entries will be consulted first. An id with no index (mod content not installed, a
   car past the array) is kept per save slot and written back with `"inactive": true`; a chosen
   vehicle that isn't installed reads as none (-1) and keeps its id. Which slot keeps them across

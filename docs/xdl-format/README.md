@@ -139,6 +139,35 @@ Two changes for the GPU:
   quadrant at a time; the section table lets a quadrant's GPU data upload on its own.
 * Collision: host-order structs as they are. **Open:** precomputed acceleration data.
 
+### 4.6 Shared data across packs
+
+Car packs repeat data: measured on the PC release's 36 car packs, **sound samples** total 2.5 MB of
+which 1.7 MB (67%) also occur in another car, **texture pixels** 2.5 MB with 0.4 MB (17%, 16
+textures) repeated, and the **object graph** (particles, stunt and AI setups, HUD; ~32 MB with
+geometry) about 6% of its data, pointer values aside. (Stunt message texts are not in car packs.)
+BrainCore already shares some of it on purpose, through the `share` pack cars reference.
+
+Per-car copies have real benefits: a car pack loads, unloads and streams on its own; adding or
+modding a car is one pack; any car can change its own particles or sounds; packs are not
+read-only (the loader writes texture ids, some structs hold playback state), so data shared by
+cars on screen together would need every written field audited; and a BrainCore pack references
+at most two others.
+
+So `.xdl` splits by kind:
+
+* **Read-only bulk data is shared by content.** Sound samples and texture pixels go in a shared
+  store (`shared.xdl`, sections keyed by a hash of their content); a pack's descriptors and
+  texture headers reference them by hash. The compiler merges identical blocks across every
+  pack, cars and worlds alike. The renderer and mixer also cache by content, so a texture used by
+  several cars is uploaded once (today's texture cache is keyed by address and uploads it per
+  car).
+* **Object graphs stay per pack**: about 6% to gain, mutable at runtime, and what a modder edits
+  per car.
+* Sources (mods) stay one car per pack; sharing happens only in compiled output.
+
+**Open:** measure the same across worlds and items; the share pack's existing exports could seed
+the shared store.
+
 ## 5. Loading in the port
 
 * `dvd.c`: `s_formats` gains `PORT_DATA_XDL` (`.xdl`, the cache folder), tried first.

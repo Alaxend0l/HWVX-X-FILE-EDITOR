@@ -62,6 +62,25 @@ GC      0201 00a0 0401 00ae 0000 00b7 …
   an override that `ShaderHolder` writes for animated textures. A tool converting between the two
   has to move the id.
 
+## Save files
+
+One file holds every slot: **`My Documents\VelocityX Saved Games\velocityX`** (the folder name and
+`SavesFolder`/`saveFile` are strings in the exe; under CrossOver, the bottle's Documents is the
+Mac's `~/Documents`). Nothing goes to the registry, which holds only the graphics options. A save
+from a session that beat Challenges 1 and 2 (`HWVX-SDL/build-saves/pc/velocityX.sav`, 2356 bytes):
+
+| offset | size | contents |
+|---|---|---|
+| 0x000 | 4 | `SAVE_FILE_MAGIC` 4 |
+| 0x004 | 4 | 0x928: the size of what follows the header (GameCube: `g_gameInfo[].version`) |
+| 0x008 | 4 | checksum: `FileManager_GetChecksum` (sum of byte + 1) over the 0x928 bytes from 0x00C; verified |
+| 0x00C | 0x188 | general settings, the GameCube's `GeneralGameSettings` (0x150) plus 0x38 bytes: volumes (`64 64`), 4 × 0x20 keyboard bindings (Windows virtual-key codes: arrows, W/A/S/D, space...), then 0x20-byte slot entries (`01`, name "HW VEL X 1", u32 year/month/day/hour/minute) |
+| 0x194 | 8 × 0xF4 | the slots' `HotWheelsGameData`, **the GameCube's struct, little-endian**: cars, tracks, items, cheats, extras, script values, vehicle, item |
+
+Decoded: both slots have cars 0–5 (the PC's default unlocks) and items 0–3; the later save has
+tracks 33 and 41 more. **Open:** the exact field map of the 0x38 extra settings bytes (beyond the
+key bindings and slot entries).
+
 ## Game logic: PC vs GameCube
 
 Compared subsystem by subsystem: the PC function was found through strings, constants and call

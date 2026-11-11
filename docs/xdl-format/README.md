@@ -446,7 +446,7 @@ Converting to `.xdl` imports progress from every save the player has, whichever 
 |---|---|---|
 | the port's own `.sav` files | the game's struct, already in host order | straightforward |
 | GameCube memory card (Dolphin `.gci` files or a raw card image) | read the save file from the card, swap the struct | straightforward; the card file system is documented |
-| PC saves | the same structs in little-endian, the PC's own file | **research**: where the PC keeps them and its header |
+| PC saves (`My Documents\VelocityX Saved Games\velocityX`) | one file, 8 slots of the GameCube's `HotWheelsGameData` in little-endian after a 0x194-byte header and settings block, checksum verified ([`../pc-version/README.md`](../pc-version/README.md) "Save files") | **decoded** |
 | PS2 memory card (`.ps2` card images, `.psu`/`.max` exports) | the card's file system, then the struct | **research**: the PS2 save layout |
 
 Retail ids are the same on every release (§8.1), so each save maps through its release's numbers

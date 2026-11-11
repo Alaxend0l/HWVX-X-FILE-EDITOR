@@ -189,13 +189,17 @@ HWVX-SDL (branch `pc-data`) loads `.xpc` packs file by file next to `.xgc` ones:
 * `dvd.c` opens a pack under its GameCube name, then the other releases' (`s_formats`: extension
   and folder per release), and tags the file with `PORT_DATA_GC/PC/PS2`.
 * `game/Port_Data.c` runs every load step by that tag: GameCube packs go to the byte swapper, PC
-  packs need no swap; PC sound samples are swapped to big-endian for the mixer; PC texture headers
-  become port-only formats (`PORT_TEX_PC | format`) that `gx_tex.c` decodes (DXT1 as RGB, DXT5, raw).
-  A setting draws them with the GameCube's colours (squared) or the PC's own.
+  packs need no swap. PC texture headers become port-only formats (`PORT_TEX_PC | format`) that
+  `gx_tex.c` decodes (DXT1 as RGB, DXT5, raw); a setting draws them with the GameCube's colours
+  (squared) or the PC's own. PC geometry is marked and drawn by index (below). PC song banks get
+  the GameCube's `RIFX` header form in place.
+* Sound samples are kept in host order whichever release they come from: GameCube PCM16 samples
+  are swapped as their pack loads, PC ones need nothing, and the mixer reads plain `s16`.
 * PS2 support needs a `s_formats` entry (`.xps`, `XPS/ENGLISH/`) and its `PORT_DATA_PS2` steps.
 
-With PC `mcp.xpc` and `HW_IPack.xpc` in a GameCube folder it boots the PC title and menus into a
-race. Still to do: geometry, music banks (`RIFF` sndb), world quad packs, collision packs.
+The whole PC install runs as `--data`: PC menus (with the PC's key hints), worlds, cars, HUD,
+items and music. Still to do: Bink movies (skipped), a pass over the PC interface screens with the
+port's menu patches, PS2 data, vertex caching for the indexed path.
 
 ### Geometry plan: the PC layout as the port's own
 
@@ -206,10 +210,17 @@ bounding boxes), the draw lists (`+0x10` only tested for non-zero), radius from 
 Shadow volumes have their own format, the same on both, read by `Render_DrawShadows`. World
 quadrants draw through the same path (`World.c` → `Gfx_DrawGeometry`).
 
-So the plan is to draw the PC layout (u16 triangles per group, unified vertex arrays per LOD)
-directly with an indexed draw, load PC geometry as it is, and convert GameCube geometry to it on
-load (the `gc2pc_geo.py` rules). Skinned geometry (car_29) needs a per-vertex bone index: from
-the per-bone count table at `LOD+0x10` on PC, from `pnmtx/3` on the GameCube.
+PC geometry is drawn in that layout directly: `Port_Data.c` finds a pack's (and a quadrant pack's)
+geometries through the pointer list and local relocations (header `0x0002`), marks their drawn
+levels `PORT_LAYOUT_INDEXED` in the level's `u16` at 0 (never read by the game), and flags their
+groups' texture relocations so the id lands at `+0x1A`. `Render_DrawGroupPrims` sends marked
+levels to `GX_PortDrawIndexed` (`gx_mesh.c`), which builds vertices the way the display-list
+decoder does. Skinned levels take each vertex's bone from the per-bone count table at `LOD+0x10`
+(bone k is matrix slot k). The next step is converting GameCube geometry to the same layout on
+load (the `gc2pc_geo.py` rules; bone from `pnmtx/3`).
+
+`VertexColorSeqManager_AddVertices` registers a quadrant's vertex-colour sequences, but nothing in
+the GameCube code reads that list, so it doesn't constrain the vertex layout.
 
 ## Open questions
 

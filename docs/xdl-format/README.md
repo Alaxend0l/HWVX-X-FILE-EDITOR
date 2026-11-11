@@ -59,7 +59,7 @@ XdlSection[numSections]         0x20 each
   u32   id                      the BrainCore pack type/id it belongs to (TOC order)
   u64   offset, size            in the file
   u32   rawSize                 when compressed
-  u32   compression             0 none, 1 zstd   (Open: worth it? see §9)
+  u32   compression             0 none, 1 zstd   (Open: worth it? see §10)
   u32   align
 ```
 
@@ -196,8 +196,14 @@ the port mixes releases file by file.
 
 ## 7. The compiler
 
-`hwvx-x compile <source folder or disc image> <cache folder>` (the editor), or the port itself on
-first run:
+**Where it runs: in the port.** HWVX-SDL already turns every release into the port's layout as
+packs load (byte order, `Port_Geometry.c`, `Port_PS2.c`, `Port_Data.c`, the menu patches), and
+those conversions are the ones its frame tests check. A compiler that reimplements them in the
+editor would be a second copy to keep equal. So the compiler is the port's loader run headless:
+load each pack exactly as the game would, then write what is in memory (the relocated graph back
+to offsets through the pointer list, the blocks the converters allocated as sections). The
+launcher's "Convert to .xdl" runs it on the player's imports; `hwvx-x compile` in the editor can
+call the same code as a library. The steps below are what that load already does:
 
 1. Read each archive (any release) with the editor's existing readers.
 2. Byte order: GameCube data through a checked swapper. The PC's little-endian copy of the same
@@ -283,7 +289,38 @@ So a reference is:
 PS2 (retail) likely shares the structure; it needs the same pairing once its formats are known.
 The PS2 prototype differs more (`docs/beta-*`).
 
-## 9. Open questions
+## 9. Mixed builds: one game from several releases
+
+A player who owns more than one release can build a cache that takes each asset from the release
+that has the best version of it (the "ultimate" build). Which release wins for what is measured,
+not assumed: [`ultimate.md`](ultimate.md) holds the rule table and the numbers behind it.
+
+* **A base release per pack.** Each pack's object graph (structs, pointer list, ids) comes from
+  one release, its *base*; the graph is what the game code reads, and releases differ there in
+  small ways (GameCube vs. PC 93.7% equal after byte order; PS2 adds textures to some tables).
+  The base is chosen per pack by the rule table; by default the release whose interface pack is
+  in use, so menus and the code variables that depend on the release (0x258) agree.
+* **Assets substituted by pairing.** Leaf data (texture pixels, sound samples, movie files) may
+  come from another release when the pairing tables (§8.1: structural id plus content pairing,
+  as `ps2_tex.py --check` / `ps2_audio.py --check` do) match it to the base's asset:
+  * a texture keeps the base's header slot and texture id; its pixels, size, levels and format
+    come from the chosen release (the uvs are normalised, so a larger texture drops in);
+  * a sound keeps the base's descriptor; samples, rate and loop come from the chosen release (a
+    PS2 base takes the PC's PCM samples with the PC's rate and loop, not its own resampled ones);
+  * unpaired assets stay the base's: nothing is guessed.
+* **Content is the union.** A pack or file only one release has (the PC's two extra movies, the
+  multi-player drag worlds the PC lacks, PS2-only sounds) is taken whole from that release, with
+  its own base.
+* **Provenance is recorded.** The header's `source` becomes `MIXED`; a MANIFEST section lists, per
+  asset, the release and fingerprint it came from. That keeps mod references (§8.1) checkable and
+  makes a wrong pick traceable.
+* **Every source is the player's.** A mixed build reads only releases the player imported; one
+  they don't own is simply not a candidate. Nothing changes about distribution (§2).
+* **Checks.** A build whose rules all pick the base must equal the single-release build byte for
+  byte (and so render the same frames); a substituted asset must decode and match its pair within
+  the pairing threshold.
+
+## 10. Open questions
 
 * Compression: zstd per section costs load CPU but saves disk. Data is ~1 GB per release
   uncompressed; worth measuring before deciding.
@@ -294,3 +331,5 @@ The PS2 prototype differs more (`docs/beta-*`).
 * PS2: geometry (VIF packets) and textures (GS formats) still need research before they can
   compile to this.
 * Version policy: bump `version` on any layout change and rebuild; no in-place migration.
+* Mixed builds (§9): how a base other than the interface pack's release affects code that asks
+  `Port_DataRelease`; whether per-asset choices should be player-overridable (a settings page).

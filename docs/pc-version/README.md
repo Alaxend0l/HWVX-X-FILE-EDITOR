@@ -14,8 +14,9 @@ comparing `HWVX-PC-Decomp` with `HWVX-GC-Decomp` and teaching HWVX-SDL to load `
 
 | | sha1 | note |
 |---|---|---|
-| `orig/pc-backup/Hot Wheels.exe` | `91af8432…` | **retail**. Match and disassemble against this one |
-| `orig/pc/Hot Wheels.exe` | `5485ea3f…` | car-limit patch from `pc_exe.md` (35 bytes in two caves) |
+| the CD's `HWVX.cab` → `Hot_Wheels.exe` | `4aa790d0…` | **the original**, as installed from the disc |
+| `orig/pc-backup/Hot Wheels.exe` | `91af8432…` | the original with a **no-CD patch**: 3 bytes at `0x455E90`, the CD check (`GetVolumeInformationA`/`GetDriveTypeA`, "Please insert the CD-ROM…"), turned into `mov al, 1; ret`. Otherwise identical; `HWVX-PC-Decomp` currently targets this one |
+| `orig/pc/Hot Wheels.exe` | `5485ea3f…` | the no-CD exe plus the car-limit patch from `pc_exe.md` (35 bytes in two caves) |
 
 PE32, image base 0x400000, no relocations needed: file offset = VA − 0x400000 in `.text`. No symbols.
 The exe still names its sources in assert paths (`C:\Projects\Game\Trigger.c`,

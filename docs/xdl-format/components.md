@@ -262,3 +262,26 @@ less on GC (22.9 MB → 20.2 MB).
 
 They use `survey_common.py` and the research walkers in `../beta-cars/research/scripts/`. Run them
 with plain `python3`. Scratch output is in `HWVX-SDL/build-survey/components/`.
+
+## 8. As built (HWVX-SDL, step 4a)
+
+`HWVX-SDL/tools/xdl_components.py` (its docstring is the reference for the file layout):
+
+| command | does |
+|---|---|
+| `factor PROJECT_ROOT [--lib DIR] [--kinds A,B] [--min-uses 2] [--near N]` | moves repeated subgraphs of extracted pack projects into a library, `<lib>/<Kind>/<name>.jsonc`, and leaves instances. `--near N` makes a subgraph that differs in at most N values an instance with overrides, or a component that `extends` another |
+| `inline PACK_PROJECT_DIR` | turns instances back into plain node files |
+| `roundtrip SURVEY_ROOT [--rel gc] [--archive HW_Cars] [--near N]` | extract, factor, rebuild, compare byte for byte |
+| `stats LIBRARY_DIR` | what the library holds |
+
+A component is a root node and the nodes below it, named from the root (`$`, `$/p10`, `$/p10/o8`).
+Its links are `$...` (inside), a `base://` share-pack id, or `"@"`, which every instance must bind.
+An instance holds the component's uid and `overrides` keyed by local node name. For a record these
+are `links`, `textures`, `sounds`, `refs`, `shaders`, `patch` (offset → hex bytes), or `bytes`/`size`.
+For a schematised node they are `doc` (JSON Merge Patch) and `base`. `null` removes a slot or node.
+`xdl_graph.Builder` expands instances, so compiled packs don't change. The layout in `pack.jsonc`
+keeps every node's id and place.
+
+`tools/test_xdl_components.py` covers made-up packs and real packs of each release. Every one
+rebuilds byte-identically; on PS2's test packs with `--near 100`, 33 components serve 76 instances,
+17 of them with overrides.

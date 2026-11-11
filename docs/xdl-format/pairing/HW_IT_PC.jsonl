@@ -1,0 +1,3 @@
+{"archive":"HW_IT_PC","packs":{"music_1":["proto"],"music_2":["proto"]}}
+{"id":"base://HW_IT_PC/music_1/song/proto:0","proto":{"i":0,"x":"25c0ff713ee1cdd5e202633738db8bc6","s":401056},"flags":["only:proto"]}
+{"id":"base://HW_IT_PC/music_2/song/proto:0","proto":{"i":0,"x":"7bda18a21ce7c97be4cdbba5c8e021e6","s":266464},"flags":["only:proto"]}

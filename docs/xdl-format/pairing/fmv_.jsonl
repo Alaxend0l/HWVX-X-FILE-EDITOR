@@ -1,0 +1,9 @@
+{"id":"base://fmv_/bglogo/movie/0","gc":{"i":0,"x":"148f3434526d51ac6c1fa368bee04bda","s":7176472},"pc":{"i":0,"x":"42d3871637987a60295400273f24ff69","s":4736736,"m":"name"},"ps2":{"i":0,"x":"112ea3474b296a822938e16bb6a6f2c3","s":4915204,"m":"name"},"proto":{"i":0,"x":"dfc3295c2b155a85929c708ff29f30ab","s":5996548,"m":"name"}}
+{"id":"base://fmv_/hw_end/movie/0","gc":{"i":0,"x":"4c7dd6cc4ca91315699dacd74c3e2e34","s":72938168},"pc":{"i":0,"x":"2c8e18ee726e07c19ae717f745a9e3c6","s":35703496,"m":"name"},"ps2":{"i":0,"x":"ae8bc1106e8c5f11f4de49216f4c1955","s":41762820,"m":"name"}}
+{"id":"base://fmv_/hw_gal/movie/0","pc":{"i":0,"x":"22504d8305e9f7f43a78b7795e4cd365","s":40800452},"flags":["only:pc"]}
+{"id":"base://fmv_/hw_intro/movie/0","gc":{"i":0,"x":"759c86284a6923364247677dddf26fc8","s":162024312},"pc":{"i":0,"x":"cde377bb90df16029aca3c033ce69d53","s":80871432,"m":"name"},"ps2":{"i":0,"x":"291dee6290cd69ef909c5f978f815609","s":101924868,"m":"name"}}
+{"id":"base://fmv_/hw_mark/movie/0","pc":{"i":0,"x":"e5c3df0dd12273aa38b4de07cd7bbe80","s":61197976},"flags":["only:pc"]}
+{"id":"base://fmv_/hwboot/movie/0","gc":{"i":0,"x":"3047433371812947d20e7c8129fc2022","s":26248696},"pc":{"i":0,"x":"4aeb288e74bfc8e19a6716d363094f2e","s":12715592,"m":"name"},"ps2":{"i":0,"x":"148ce9e9cd4b0c5b8743453612fc8463","s":24608772,"m":"name"}}
+{"id":"base://fmv_/hwtrail/movie/0","proto":{"i":0,"x":"2519d9d2467e1188b6e340e65bfaa3bc","s":119242756},"flags":["only:proto"]}
+{"id":"base://fmv_/m1intro/movie/0","proto":{"i":0,"x":"212c74792766b00b6bf4540410fc2640","s":88850436},"flags":["only:proto"]}
+{"id":"base://fmv_/thqlogo/movie/0","gc":{"i":0,"x":"c1d52847b2cb1a11d8f5bb86ffb6fb5d","s":5049656},"pc":{"i":0,"x":"6f7b84f75d0b7b1c9ceb8d1de7a5bdb3","s":3535868,"m":"name"},"ps2":{"i":0,"x":"fbe542dc04b5c9c818218e17ad43fd8d","s":2801668,"m":"name"},"proto":{"i":0,"x":"a10cd04ff116c88f46386e76febef5cb","s":3309572,"m":"name"}}

@@ -1,0 +1,3 @@
+{"archive":"mcp","packs":{"link_0":["gc","pc","ps2","proto"]}}
+{"id":"base://mcp/link_0/texture/0","gc":{"i":0,"x":"75f9c3af455e2c3f99c6e10db101fa04","s":10888,"w":128,"h":128},"pc":{"i":0,"x":"f0bd8ea8a047989ddb440291101155f7","s":10944,"d":1.59},"ps2":{"i":0,"x":"fde099d0ecf338c983660ba4566fc3ce","s":22877,"d":1.95},"proto":{"i":0,"x":"fde099d0ecf338c983660ba4566fc3ce","s":22877,"d":1.95}}
+{"id":"base://mcp/link_0/texture/1","gc":{"i":1,"x":"6a2822b70fab8633258551bbcd9e63fe","s":43656,"w":256,"h":256},"pc":{"i":1,"x":"86e947029fe7b8bc8da13824d9b2b59b","s":43712,"d":1.77},"ps2":{"i":1,"x":"444da80e5017b46d3fd8da5cc5bab904","s":88413,"d":2.41},"proto":{"i":1,"x":"444da80e5017b46d3fd8da5cc5bab904","s":88413,"d":2.41}}

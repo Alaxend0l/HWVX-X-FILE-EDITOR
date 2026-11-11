@@ -1,0 +1,7 @@
+{"archive":"HW_SSEQ","packs":{"audio_1":["proto"],"audio_2":["proto"],"audio_3":["proto"],"audio_4":["proto"],"audio_5":["proto"],"audio_6":["proto"]}}
+{"id":"base://HW_SSEQ/audio_1/sound/proto:0","proto":{"i":0,"x":"3b6776fb6a9c3dd2769e1836a701c640","s":55408,"c":96936},"flags":["only:proto"]}
+{"id":"base://HW_SSEQ/audio_2/sound/proto:0","proto":{"i":0,"x":"823a357cd5f2c25ba4aa8b30912811ae","s":93824,"c":164164},"flags":["only:proto"]}
+{"id":"base://HW_SSEQ/audio_3/sound/proto:0","proto":{"i":0,"x":"68dc2593e7576d936abc627fed3e7bf3","s":98944,"c":173124},"flags":["only:proto"]}
+{"id":"base://HW_SSEQ/audio_4/sound/proto:0","proto":{"i":0,"x":"8fbc794ce54e507368224ee4ac8a102e","s":49040,"c":85792},"flags":["only:proto"]}
+{"id":"base://HW_SSEQ/audio_5/sound/proto:0","proto":{"i":0,"x":"753ff661b853db692fc7aaa9846606fa","s":29664,"c":51884},"flags":["only:proto"]}
+{"id":"base://HW_SSEQ/audio_6/sound/proto:0","proto":{"i":0,"x":"a3eef56f7b7fd25fb96bba85c1b7be50","s":67184,"c":117544},"flags":["only:proto"]}

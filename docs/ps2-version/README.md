@@ -316,11 +316,16 @@ On the memory card: directory **`BASLUS-20412`** (the US release's product code)
 [`scripts/ps2_mcd.py`](scripts/ps2_mcd.py) lists and extracts files from a PCSX2 `.ps2` card image
 (the card file system with ECC, documented in the script).
 
-The save is the **GameCube's layout exactly, in little-endian**: `SAVE_FILE_MAGIC` 4, size 0x8F0,
-the game's checksum (sum of byte + 1 over the 0x8F0 bytes from 0x00C; verified), the 0x150-byte
-`GeneralGameSettings` (volumes, four keyboard bindings in Windows key codes, as the PC has, and the
-slot entries "HW VEL X 1" ...), then 8 × 0xF4 `HotWheelsGameData` slots from 0x15C. The PC's file is
-the same plus 0x38 bytes of settings (`../pc-version/README.md` "Save files").
+The save is the **GameCube's layout in little-endian, with the settings packed**: `SAVE_FILE_MAGIC`
+4, size 0x8F0, the game's checksum (sum of byte + 1 over the 0x8F0 bytes from 0x00C; verified), the
+0x150-byte `GeneralGameSettings`, then 8 × 0xF4 `HotWheelsGameData` slots from 0x15C. The settings
+are the GameCube's fields without its alignment: a **u8** first where the GameCube has its s32
+difficulty (`GameSetting_Init` sets it to 1; the GameCube's starts at 0), the audio at +1 (`64 64
+01 00`), the four 0x12-byte controller settings at +5 (`GameSettings_GetControllerSettings` returns
+`D_5589B0 + 5 + 0x12 × (player − 1)`; the binding bytes are the same as the GameCube's and the
+PC's), 3 bytes of padding, and the slot entries "HW VEL X 1" ... at +0x50 as the GameCube's. The
+PC's file is the GameCube's layout plus 0x38 bytes of settings (`../pc-version/README.md` "Save
+files"). HWVX-SDL imports the card image, the file and `.psu` exports (docs/xdl-format §11.5).
 
 Cross-checked: a PS2 save and a PC save made after the same progress (Challenge 1) hold the same
 unlocks byte for byte: cars 0–5, items 0–3, tracks 0, 5, 19–22, 29–32, 39, 40.

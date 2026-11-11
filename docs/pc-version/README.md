@@ -74,12 +74,20 @@ from a session that beat Challenges 1 and 2 (`HWVX-SDL/build-saves/pc/velocityX.
 | 0x000 | 4 | `SAVE_FILE_MAGIC` 4 |
 | 0x004 | 4 | 0x928: the size of what follows the header (GameCube: `g_gameInfo[].version`) |
 | 0x008 | 4 | checksum: `FileManager_GetChecksum` (sum of byte + 1) over the 0x928 bytes from 0x00C; verified |
-| 0x00C | 0x188 | general settings, the GameCube's `GeneralGameSettings` (0x150) plus 0x38 bytes: volumes (`64 64`), 4 × 0x20 keyboard bindings (Windows virtual-key codes: arrows, W/A/S/D, space...), then 0x20-byte slot entries (`01`, name "HW VEL X 1", u32 year/month/day/hour/minute) |
+| 0x00C | 0x188 | general settings, the GameCube's `GeneralGameSettings` (0x150) plus 0x38 bytes: s32 difficulty, audio (`64 64 01 00`), **4 × 0x20 controller settings**, then at +0x88 the 0x20-byte slot entries (`01`, name "HW VEL X 1", u32 year/month/day/hour/minute) |
 | 0x194 | 8 × 0xF4 | the slots' `HotWheelsGameData`, **the GameCube's struct, little-endian**: cars, tracks, items, cheats, extras, script values, vehicle, item |
 
 Decoded: both slots have cars 0–5 (the PC's default unlocks) and items 0–3; the later save has
-tracks 33 and 41 more. **Open:** the exact field map of the 0x38 extra settings bytes (beyond the
-key bindings and slot entries).
+tracks 33 and 41 more.
+
+The 0x38 extra bytes are 4 × 14: each player's controller settings are 0x20 bytes where the
+GameCube's are 0x12. The first 0x12 are the GameCube's (`data[0]` vibration, `data[1]` control
+scheme, then the 16 bytes of the MCP's binding, `00 00 41 11 26 28 00 10 57 53 27 25 44 20 c0 00`,
+the same on all three releases: its key codes are Windows virtual keys, arrows, W/A/S/D, space);
+then a 13-byte gamepad button map (`0a 0b 09 07 08 06 04 05 03 02 0c 0d 01`, the defaults
+`func_00429F10` writes at +0x12) and one byte of padding. The settings block is
+`D_0064D160` (0x188 bytes, `func_0042C1A0` writes it), the slot entries `D_0064D1E8` = +0x88.
+HWVX-SDL imports these saves (`Port_SaveImport.c`, docs/xdl-format §11.5).
 
 ## Game logic: PC vs GameCube
 

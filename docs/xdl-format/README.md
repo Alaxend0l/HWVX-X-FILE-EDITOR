@@ -445,9 +445,16 @@ Converting to `.xdl` imports progress from every save the player has, whichever 
 | source | how | state |
 |---|---|---|
 | the port's own `.sav` files | the game's struct, already in host order | straightforward |
-| GameCube memory card (Dolphin `.gci` files or a raw card image) | read the save file from the card, swap the struct | straightforward; the card file system is documented |
+| GameCube memory card (Dolphin `.gci` exports; raw card images still to add) | `GHWE78` file `hwvx`: one 0x2000 block after the 0x40-byte `.gci` header; name and comment, banner and icons (0x800), then at +0x840 the save in the same layout as the PS2's, **big-endian**, checksum verified | **decoded** |
 | PC saves (`My Documents\VelocityX Saved Games\velocityX`) | one file, 8 slots of the GameCube's `HotWheelsGameData` in little-endian after a 0x194-byte header and settings block, checksum verified ([`../pc-version/README.md`](../pc-version/README.md) "Save files") | **decoded** |
 | PS2 memory card (`.ps2` card images) | the card's file system (`ps2_mcd.py`), then `BASLUS-20412/BASLUS-20412`: the GameCube's save layout in little-endian, checksum verified ([`../ps2-version/README.md`](../ps2-version/README.md) §5.5) | **decoded**; `.psu`/`.max` exports still to add |
+
+All three releases store the same file: `SAVE_FILE_MAGIC` 4, size, the game's checksum (sum of
+byte + 1), `GeneralGameSettings` (0x150; the PC's 0x38 bytes longer), then 8 × 0xF4
+`HotWheelsGameData` slots. GameCube big-endian, PC and PS2 little-endian. Saves made after the same
+progress (Challenge 1) on all three hold the same tracks, items, extras and script values; the
+cars differ only by the releases' defaults (GameCube 3–5, its 0–2 coming from the GBA link; PC
+and PS2 0–5). An import keeps the union, so a GameCube player importing a PC save gains cars 0–2.
 
 Retail ids are the same on every release (§8.1), so each save maps through its release's numbers
 to the same `base://` ids. Several saves **merge as a union** (an unlock in any counts; for counters

@@ -520,6 +520,60 @@ and best results the highest) with a preview and the choice to import one save o
 original files are never changed. An export back to a release's own format remains possible
 where the content is retail-only.
 
+### 11.4 As built in HWVX-SDL (step 4c)
+
+Branch `saves` of HWVX-SDL. **`HWVX_SAVES=json`** switches it on (off by default, so retail
+behaviour is unchanged; not yet tied to running on `.xdl`). `HWVX_PREF_DIR` points the whole
+preferences folder elsewhere for tests.
+
+* **Where it hooks:** the memory card calls in `FileManager_NGC.c` (`MemCard_Open/Read/Write`,
+  `File_Delete`), which the game always makes with a whole `SaveFile`. Everything above them is
+  the game's own flow: card status, the slot list, overwrite, naming, "Saving...", the autoload
+  and the port's autosaves. A save with no good file reads as zeroes, so the game's checksum check
+  shows its damaged-file screen, as for a bad card.
+* **Files**, `<pref>/saves/<profile>/` (profile `default` only, `Port_SavesProfile` is where a
+  profile per mod set will be chosen): `hwvx.json`; backups `hwvx.1.json` (newest) to
+  `hwvx.5.json`; `hwvx.json.tmp` during a write; `hwvx.damaged.json`, a damaged save moved aside
+  by the next write (not rotated into the backups); `hwvx.imported`, the card file it was
+  imported from; `deleted/`, where the game's Delete moves the files.
+* **Write:** the `.tmp` is written and synced (`fsync`, `FlushFileBuffers`), the backups move up
+  one and the current save is *copied* to `.1`, then the `.tmp` is renamed over the save
+  (`rename`, `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)`): the save itself is never missing.
+* **Hash:** each file ends in `// sha256: <hex>` over everything before that line, so one file is
+  self-checking and no index has to be kept in step. A file without the line counts as edited by
+  hand and is read as it is (logged); one whose hash is wrong, that won't parse or isn't a save
+  falls back to the newest good backup, logged. A `format_version` newer than the build is never
+  read.
+* **Ids** (`Port_SaveIds.c`, one table): cars `base://HW_Cars/car_<n>` (the car packs);
+  tracks and items are numbers the MCP script gives events and items, not packs, so
+  `base://mcp/track/<n>` and `base://mcp/item/<n>`. The chosen vehicle and item are ids too.
+  `ids.lock` entries will be consulted first. An id with no index (mod content not installed, a
+  car past the array) is kept per save slot and written back with `"inactive": true`; a chosen
+  vehicle that isn't installed reads as none (-1) and keeps its id. Which slot keeps them across
+  the game's shifting of slots: the one with the same name and date, else the same name. The
+  port's unlock checks don't consult kept entries yet (nothing past the arrays exists yet).
+* **Lossless:** the round trip is byte for byte, padding included (written only when not zero;
+  DD Rescue's struct has an unnamed 2-byte hole after `carMode`). DD Rescue's world state is
+  named records (timers, variables, world cars...), its byte arrays as hex. Its `SaveFile`
+  (0xE83C bytes) doesn't fit the card file's 0x17C0-byte data area, which the card path
+  overruns; the JSON store holds it whole.
+* **Migration:** with no JSON save, `memcardA/<name>.sav` is imported once (checksum checked; the
+  `.sav` stays). The `.imported` marker keeps a deleted save from coming back.
+* **Tests:** `tools/savetest.c` (`ctest -R savetest`): the GameCube example `.gci` through JSON
+  and back field by field, random saves of both game types byte for byte, kept ids, a write
+  stopped after its `.tmp`, damaged saves, rotation, import. In game: a save made from the Save
+  Game screen loads after a restart; a damaged save boots from its backup. With the switch off
+  the title demo is frame-identical.
+
+**Left for 4d (importing other releases):** `Port_SaveFromBinary` already reads a `SaveFile` in
+either byte order with its checksum, so the GameCube's `.gci` (+0x40+0x840, big-endian) works
+today in the test. Still to do: the PC's longer settings block (0x188, its 0x38 extra bytes not
+mapped; the slots are the GameCube's struct) as a separate reader; raw GameCube card images; the
+PS2 card file system (`ps2_mcd.py` in C) and `.psu`/`.max`; DD Rescue's `playerStats` in the
+other byte order (left as bytes); importing into an existing JSON save as a union (highest
+counters) with a preview and a choice of one save, rather than only when none exists; and a
+way for the player to pick files (launcher).
+
 ## 12. Extracting existing packs
 
 `.xgc`, `.xpc` and `.xps` packs extract to source projects (§10), so existing content becomes

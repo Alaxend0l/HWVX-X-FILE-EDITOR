@@ -7,9 +7,10 @@ pack, `HW_IPack.xgc` / `.xpc` / `.xps`. The main menu is the root of the menu pa
 
 This inventory was taken from the loaded data: HWVX-SDL's `HWVX_MENUDUMP=1` (`Port_MenuDump.c`)
 logs every screen reachable from each interface the game creates, with its texts, rows (record
-id, up/down ring) and what each row's events do (`=2` adds every object). Data: GameCube
-`orig/gc/files`, PC `orig/pc` with `orig/pc-backup`'s original `HW_IPack`/`HW_Cars`/world packs,
-PS2 `orig/ps2`. Object counts are the screens' own.
+id, up/down ring) and what each row's events do (`=2` adds every object, with their positions and
+conditions). Data: GameCube `orig/gc/files`, PC the CD as the HWVX-SDL launcher imports it (the
+pristine data; `orig/pc-backup`'s packs have been modified), PS2 `orig/ps2`. Object counts are the
+screens' own.
 
 ## Inventory
 
@@ -30,7 +31,7 @@ PS2 `orig/ps2`. Object counts are the screens' own.
 | Loading / saving | "LOAD GAME" (15), "SAVE GAME" (14): progress, then Retry / Continue without loading | same | same |
 | Settings reminder | "Be sure to save your game..." (12), shown on leaving Options | same | same, "...Velocity X Maximum Justice*." |
 | Extras | Credits, FMV (play all), Game Bootup, Adventure Start, Adventure End | same | same |
-| Pause (world packs) | Resume, Restart, Controller, Save, Quit | same | same |
+| Pause (world packs) | Resume, Mission Info, Restart, Controller, Save, Quit | same, and **Exit to Desktop** under Quit (39 objects) | same as GameCube |
 
 Notes:
 
@@ -38,10 +39,45 @@ Notes:
   GameCube code's id-8 start event, 0x1F, counts whatever id-2 children the screen has). Its screens
   sit at other offsets in the pack, so nothing found by GameCube offsets is there.
 * PC removed everything multi-player from the menu pack but kept the MCP's multi-player
-  progressions and the battle worlds; its car select exists only in the one-player form.
+  progressions and the battle worlds; its car select exists only in the one-player form. The
+  multi-player drag race worlds are gone too: progression 5 still lists `WORLDS_\MP_\DRAG_\race1l1`
+  .. `race6l1`, but the CD has only the one-player `race1l2` .. `race6l2` (progression 2), and a
+  one-player drag world spawns one human only (tried: two players in progression 2 race alone).
+  The battle worlds (`bat1_l1` ..) serve both progression 3 and 7.
+* The one-player car select (id 2, 84 objects) is laid out the same in all three: title
+  "Vehicle / Select" at y 78, the car windows at 126, the car's name at 205, the stats from 295.
+  The GameCube's split pane (74 objects) is that top strip with a join step (rows setting code var
+  0xC9 = 2, a "Press A to join" child, "Ready"); the id-8 start (event 0x1F) counts the id-2
+  children and starts once every one is at 0xC9 = 3 and at least two are, with more than one.
+* Code variable 0x258, which the interfaces test as a platform id: GameCube 2, PS2 1, PC 0 (the PC
+  exe's `GameSettings_GetCodeVariable`, `0x42A680`, sends it to its default case). The PC's One
+  Player, Extras and options screens show some decoration only on 0.
 * The PC adds Exit to Desktop with its own confirm screen; the GameCube's quit screen exists in
   all three (made for the GameCube's exit to the system menu from the memory card screens).
 * The memory-card screens are the same on GameCube and PS2 (slot picker, then a file list); the
   PC's are the file list alone. The progress, failure, naming and reminder screens are alike.
 * Each release draws its rows the same way (text rows 26 apart from y 198 in a panel spanning
   about 170-360); the PC's Options rows are 31 apart from y 203.
+
+## In HWVX-SDL: one set of menus
+
+HWVX-SDL's `src/game/Port_Menu.c` patches the menus as each release's pack has them when they are
+created, finding screens by content (texts, record ids, go-to targets) and building anything new
+from the loaded release's own objects; nothing is copied into the executable or taken from another
+release's pack. The result, with default settings:
+
+| | GameCube | PC | PS2 |
+|---|---|---|---|
+| Main menu | One Player, Multi-Player, Load, Save, Options, Extras, **Quit Game** (the pack's Confirm Quit screen) | One Player, **Multi-Player**, Load, Save, Options, Extras, Exit to Desktop (its own) | as GameCube |
+| Multi-Player | port screen: Online, Local (the pack's Multi-Player) | the same, Local opening a Multi-Player screen **built from One Player's**: Battle only (no drag worlds) | as GameCube |
+| MP options, world selects | the pack's | built from One Player's: Battle Options going to a copy of Battle Select picking progression 7 (and, where the drag worlds exist, Drag Race Options without Opponents, 0x133 = 1, and Drag Race Select picking 5) | the pack's |
+| Split car select | the pack's, four players | built: the car select wrapper with **two** copies of the one-player car select showing only their top strip, "First / Player" and "Second / Player", one controller each; A picks (no join step) | the pack's, two players |
+| Options | Graphics row and screen | the same (built from its five-row Options) | the same |
+| Load / Save | slot A's file list straight away | the PC's own file lists | as GameCube |
+| Pause, multi-player | no Save, rows under it moved up | the same, Quit and Exit to Desktop moved | as GameCube |
+| Battle Options, online | no Opponents row | the same | the same |
+
+`mainmenu=original` leaves each release's main menu as its pack has it. What is not there: PC
+Drag Race in Multi-Player (no worlds for it on the CD), and PC split screen for three or four
+players (the car select strip is about 160 units tall; two fit the 480-unit screen, four would need
+the panes scaled, and the interface code only offsets children, never scales them).

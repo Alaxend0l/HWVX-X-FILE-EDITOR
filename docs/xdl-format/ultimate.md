@@ -324,3 +324,32 @@ python3 movie_survey.py ../../../orig/gc/files/fmv_ "<pc>/FMV_" ../../../orig/ps
 
 Needs numpy (`tex_survey`, `audio_survey --content`, `movie_survey`) and ffmpeg (`movie_survey`);
 run without `-I` so the user site-packages are found.
+
+## As built (HWVX-SDL, step 4b)
+
+* **Commands:** `hwvx --mix-build ultimate` converts every pack into `<pref>/xdl/mix-ultimate/`.
+  `hwvx --mix ultimate` then plays from it. `HWVX_MIX` and `HWVX_MIX_BUILD` do the same from the
+  environment.
+* **Recipes:** `recipes/ultimate.jsonc` is built in; any other `.jsonc` file can be passed instead.
+* **Which release supplies what:** the releases come from `sources.cfg`, overridden by
+  `HWVX_MIX_GC`, `HWVX_MIX_PC` and `HWVX_MIX_PS2`. Each archive's packs load whole from the base
+  release the recipe names. Each texture or sound then comes from the release its rule picks,
+  through the pairing table, generated as `src/game/Port_MixPairs.c` by
+  `tools/gen_mix_pairs.py`.
+* **Code:** the substitution runs as a pack loads (`src/game/Port_Mix.c`). The recipe and the
+  releases' files are in `src/port/mix.c`.
+* **Cache:** a mixed pack is marked in the cache header (`XDL_SOURCE_MIXED`, with a stamp of the
+  recipe and releases), so changing either rebuilds it.
+
+**Measured on the three retail releases:**
+
+* 369 packs are mixed, 365 of them converted.
+* Textures: 2,252 from the PC, 1,052 from the PS2, and 8,397 kept from the base. None looked
+  unlike its pair.
+* Sounds: all 4,773 are the base's own.
+* The cache is 664 MB.
+* The attract demo plays from it at about the speed of a plain GameCube run.
+* Single-release play is unchanged on all three releases (attract demo frame-identical).
+
+**Not done yet:** the launcher's "Build a mixed game..." row is still a placeholder
+(`Port_LauncherMixedBuild`).

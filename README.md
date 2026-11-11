@@ -94,7 +94,9 @@ format research behind it, [`docs/beta-worlds/`](docs/beta-worlds/README.md)
 for the world-level port (putting the prototype's CH1_L2 into the shipped
 GameCube level), and [`docs/beta-audio/`](docs/beta-audio/README.md) for the
 audio port (putting the prototype's briefing dialogue into the shipped
-GameCube audio archives).
+GameCube audio archives). [`docs/pc-version/`](docs/pc-version/README.md)
+collects how the PC release differs from the GameCube one, in code and in
+data, with a map of the PC exe.
 
 ## Extracted layout
 

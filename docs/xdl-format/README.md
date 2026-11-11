@@ -700,9 +700,87 @@ something to edit, learn from or build on:
   data back into `base://` references or refuses.
 * The round trip (§10.7) is the test: extract a release, compile it, compare with the direct
   build.
-* Extraction uses the same per-release readers as the compiler, so a PS2 pack extracts to the
-  same project shape as its GameCube and PC counterparts; `--release` picks one when the player
-  has several, or a mixed extraction applies the rule table of §9.
+* **Two directions, two homes.** Source project ⇄ pack bytes belongs to **Python tools** in
+  HWVX-SDL `tools/`: they read a release's own packs (`.xgc` big-endian, `.xpc` and `.xps`
+  little-endian) and write them back byte for byte. Pack → `.xdl` cache is the port's job (§5),
+  and is done. So extraction does **not** go through the port's readers: the tools have their own
+  per-release readers, and the byte-exact round trip is what keeps them honest. `xdl_struct.py`
+  converts pack structs ⇄ JSONC from the generated schemas ([`schemas.md`](schemas.md)),
+  `xdl_media.py` the bulk data (§12.1); models and object graphs get tools of their own.
+* Every release extracts to the same file kinds under the same `base://` ids
+  ([`pairing.md`](pairing.md)), each copy in its own release's encoding; `--release` picks one when
+  the player has several, or a mixed extraction applies the rule table of §9.
+
+### 12.1 Media: `tools/xdl_media.py`
+
+Textures to PNG, sound effects to WAV, songs to `.mid` with their instrument bank as JSONC naming
+WAV samples (step 3a). Built on HWVX-SDL branch `media`.
+
+```
+xdl_media.py extract ARCHIVE[:PACK] OUT     one pack (car_5, geometry_0_q12, a TOC index), or all
+xdl_media.py build OUT PACK_FILE [--base ARCHIVE]   the pack's bytes (its TOC entry's payload)
+xdl_media.py roundtrip ARCHIVE|FOLDER... [--fresh] [--keep]   extract + build every pack, compare
+xdl_media.py schemas [--check]              schemas/Media{Pack,Texture,Sound,Bank}.schema.json
+```
+
+A pack's folder (`<i>` is the id's index, `ps2:5` written `ps2_5`):
+
+```
+media.jsonc                 base://HW_Cars/car_5, release, the source archive and its BLAKE2b
+texture/<i>/texture.jsonc   format, size, the header's level count, per level: pixels + encoded hash
+texture/<i>/level<k>.png    one PNG per stored level (level0 = full size)
+sound/<i>.wav, <i>.jsonc    mono PCM16; rate, loop (in samples), volume, the descriptor's other bytes
+song/song.mid               the RIFX 'MIDI' chunk's body: already a standard MIDI file
+song/bank.jsonc             instruments: program (128 = drum), key range, envelope, rate, loop, sample
+song/bank/<k>.wav           the bank's samples, one per distinct sample (instruments share them)
+```
+
+**Build starts from the player's copy of the pack**, found through `media.jsonc` (or `--base`) and
+checked against its recorded hash, as `xdl_struct.py` starts from the `extends` object. It zeroes
+every byte the files describe (texture headers, levels, CLUTs, descriptors, samples, song, bank)
+and writes them from the files; everything else (objects, relocations, geometry) comes from the
+base until the other tools write it.
+
+* **Lossless** kinds are encoded from the files every time: GameCube RGBA8, PS2 PSMCT32, PS2 PSMT8
+  (written as a **palette PNG**: indices and CLUT exactly; textures sharing a CLUT must keep equal
+  palettes), PCM16 samples, songs, bank tables.
+* **Lossy** encodings (CMPR, DXT1/DXT5, SPU-ADPCM) can't be recovered from what they decode to.
+  Their sidecars record a BLAKE2b-128 of the stored bytes and of the decoded pixels or samples;
+  while a file still decodes to the recorded hash, build copies the base's encoding, else it
+  encodes afresh (principal-axis endpoint fit for the block formats, a 5-filter search for ADPCM,
+  Pillow's octree for a PSMT8 texture edited as RGBA). A missing mip PNG is made from the level
+  above.
+* **Sizes**: textures keep their slot's format, size and level count (the data blob can't grow
+  without the compiler). Sounds, songs and bank samples may change length: `sound_data` holds
+  nothing but them (checked on every pack of the three releases), so build lays it out again,
+  keeping offsets until something grows, and moves the sections after it.
+* No wrap or filter in `texture.jsonc`: a pack's texture header has none (format, size, levels,
+  pointer, one word); the game sets wrap per draw (`Gfx_SetTextureWrapMode`).
+* Stored levels: the header's count (0 = one), except **GameCube RGBA8** (one level whatever the
+  count says, as the game's `TexSize`) and the **PS2's PSMCT32 chains**, whose 1×1 level is the
+  next texture's first texel (71 textures). PS2 sounds drop their silent first ADPCM block in the
+  WAV; a fresh encode writes it back with the release's block flags.
+* Hashes agree with the pairing table: a texture's `fingerprint` is its §3.1 `x`, a GameCube or PC
+  sound's `samples` its `n`.
+
+**Round trip**, every pack of the three retail releases (`roundtrip`, ~40 s on 10 cores):
+
+| release | packs byte-identical | built from the files | base's encoding reused (files unchanged) |
+|---|---|---|---|
+| GameCube | 512 / 512 | 1,301 RGBA8 levels, 4,723 sounds, 60 songs, 60 banks with 1,259 samples | 30,207 CMPR levels |
+| PC | 506 / 506 | 4,347 sounds, 54 songs, 54 banks with 1,146 samples | 48,248 DXT1, 16,333 DXT5 levels |
+| PS2 | 512 / 512 | 571 PSMCT32 and 68,675 PSMT8 levels, 8,435 CLUTs, 60 songs, 60 bank tables | 4,723 sounds, 1,259 bank samples (ADPCM) |
+
+What can't round-trip from the files alone is exactly the lossy part: CMPR/DXT levels and PS2
+samples come back from the base. With `--fresh` (every lossy asset encoded from its PNG or WAV) on
+HW_Cars and HW_IPack, against the original's decode: CMPR RGB RMSE median 1.0 (p90 2.1), DXT1 0.9
+(2.5), DXT5 0.4 (2.1) with alpha 1.7 (5.4), ADPCM SNR median 37 dB.
+
+Checked by playing: `ffprobe` reads the WAVs (PCM16 mono at the descriptor's rate); MuseScore
+(`mscore -o x.pdf song.mid`) imports all 60 GameCube songs, and renders one to audio.
+`tools/test_xdl_media.py` edits textures, palettes, sounds, songs and banks of `car_5` and
+`music_1` on each release and checks the refused cases (another texture size, WAV rate or channel
+count, a base that isn't the extracted copy, schema errors).
 
 ## 13. Reusable components
 

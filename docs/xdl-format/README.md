@@ -72,6 +72,15 @@ XdlSection[numSections]         0x20 each
 * Sections are aligned (64 bytes, or 4 KiB for memory mapping). **Open:** memory-map the file
   and point into it instead of reading, once the handle registry can hold mapped ranges.
 
+**As built in step 1** (§5.1, HWVX-SDL `src/port/xdl.c`): the fields above do not fit 0x20, so a
+section is `u32 kind, pack (TOC index); u64 offset; u32 size, rawSize; u16 compression, align;
+u32 segment`. The header's `sourceHash` holds the source file's size and modification time (u64
+each), not a content hash, and a `settings` word records conversion switches that change the
+output (`HWVX_PS2CULL`). The TOC is the last section and the section table follows it, so a pack
+written later appends its sections where the TOC was and rewrites both, the header last. The
+TOC's entries are `{type, id, source offset, PACK section}`, keyed by the pack's offset in its
+source file (a quadrant has no type/id of its own the loader knows).
+
 ## 4. Pack contents
 
 ### 4.1 Object graph
@@ -181,6 +190,50 @@ are built from.
 * `gx_tex.c`: XDL texture formats upload as block data; no decode.
 * Fallback: if a cache file is missing or stale, the port loads the source as today (and can
   compile it in the background).
+
+### 5.1 Step 1, as built: the converted packs, cached
+
+HWVX-SDL's first `.xdl` stores no new layout: it is each pack as the port's loader leaves it in
+memory, read back with every conversion skipped (`HWVX_XDL_WRITE=1` fills it, `HWVX_XDL=1`
+reads it; `src/port/xdl.c`). The title demo renders byte-identical frames from the cache and
+from the source for the GameCube, PC and PS2 releases. What it taught:
+
+* **The source stays open.** `dvd.c` doesn't open the cache *instead of* the source: the game
+  still reads the source's TOC (`DataPack_LoadFile`) and its quadrant offsets (`FileStreaming`)
+  through its own file layer. `DVDOpen` attaches the cache file, if current, to the open source
+  (`DVDFileInfo.xdl`); `DataPack_LoadDataPack` and `DataPack_LoadQuadPack` look a pack up by its
+  offset in the source and skip the reads. One cache file per source file, under
+  `<pref>/xdl/<gc|pc|ps2>/`, so one release's cache is never read for another's data.
+* **A pack is segments, not one blob.** Per pack: MAIN (tables, blob and relocations as read and
+  converted), SOUND (the sound data as `CreateSFX`/`CreateMIDI` read it, PS2 samples decoded
+  and pointers fixed), BANK and SFX (the PS2's rebuilt song bank and decoded samples: blocks
+  freed again during the load, but the mixer reads them, so they are cached), up to 8 BLOCKs (the
+  converters' geometry and PS2 texture blocks; each records whether `DataPack.soundData` holds it
+  or `PortGeometry_Keep` does), and RAW_* (below). A quadrant is a pack of its own with MAIN and
+  BLOCKs only.
+* **Pointers: fixups, recorded.** A fixup is `{slot segment, slot offset, target segment}`; the
+  stored slot holds the offset into the target, and the loader adds the target's handle. The
+  slots are the pointer list's, the sound pointer table's, the local pointer relocations' (cross-
+  pack ones stay relocations, resolved at load as before, the stored slot zeroed), and every slot
+  a converter stores to or clears, which it reports (`Xdl_NoteSlot` in `PlaceLevel`, the PS2
+  shadow levels, PS2 texture pixels and SFX descriptors). The pointer list alone is not enough:
+  converters point list slots into new blocks, write pointers where the list has none (a skinned
+  level's bone counts at 0x10) and clear list slots (PS2 shadow levels). A slot's target is the
+  segment its value falls in; nothing is guessed from what memory holds.
+* **Offsets are from the aligned read, not the allocation.** The loader aligns the blob to 64
+  bytes inside its allocation, so where it lands depends on where the allocation does, which
+  differs between loads of the same pack.
+* **The heap is part of what the game can see.** The loader takes the same blocks, the same
+  sizes, in the same order as the source load (including a PS2 bank or sample block freed again
+  within the load), so later allocations land where they would have. `File_Read` borrows a heap
+  buffer for small reads and leaves the file's bytes in it, and large reads write up to 31 bytes
+  past the end: both are reproduced (RAW_* segments; segments rounded up to 32 bytes).
+* **Loader-written slots inside the data.** A quadrant's header holds its pack refs, which the
+  loader fills in only if they are empty: they are cached as read (`Xdl_KeepValue`), or a cached
+  quadrant would point at the refs of the run that wrote the cache.
+* Kept from the source path: sound ids, song loading, the order cross-pack refs load in, the
+  display-list invalidation the byte-swapper does. Skipped: `PortData_*` conversions,
+  `UpdatePointers`, `PortGeometry_Convert*`, `PortPS2_*`.
 
 ## 6. Menus
 

@@ -406,6 +406,24 @@ not assumed: [`ultimate.md`](ultimate.md) holds the rule table and the numbers b
   byte (and so render the same frames); a substituted asset must decode and match its pair within
   the pairing threshold.
 
+### 9.1 The PS2 prototype's content
+
+The prototype (`orig/ps2-beta`, research in `../beta-cars`, `../beta-worlds`, `../beta-audio`) is
+a release too, with three import modes the player picks (the launcher's Games page, on the
+prototype's row), each a rule set over the same pairing table ([`pairing.md`](pairing.md)):
+
+| mode | effect | ids, saves |
+|---|---|---|
+| **beta cars only** | the prototype-only cars are added as extra cars | new ids for them (`ids.lock`); retail untouched |
+| **beta content added** | all prototype content (cars, worlds, audio) is added beside the retail game; where both have a version, the prototype's appears as its own entry ("… (prototype)") | new ids for everything added; saves unaffected |
+| **beta replaces retail** | where the pairing table matches a prototype asset to a retail one, the prototype's is used; prototype-only content is added as above | retail ids keep their meaning, so saves keep working |
+
+* Only what pairs can be replaced: the prototype pairs with retail for 33–43% of its textures,
+  sounds and geometry, the rest being prototype-only or reworked. The preview says what is
+  replaced, added and left as retail.
+* Extra cars past the retail 33 need the port's fixed tables raised (as `../beta-cars/research/pc_exe.md`
+  did for the PC exe); the id-keyed saves (§11) already hold them.
+
 ## 10. Source projects: what people edit
 
 The compiled `.xdl` is for the port to load fast; nobody edits it. What people work with (new

@@ -214,12 +214,36 @@ Checks: every pack loads in HWVX-SDL with `HWVX_DETERMINISTIC=1` and the title d
 byte-identical frames to loading the source (this works today for source data, see
 port-format §5).
 
-## 8. Mods
+## 8. Mods without game data
 
-* A mods folder checked before the cache and the source, per file and later per pack id.
-* Mods are sources (glTF, PNG, JSON menu patches, pack folders from `hwvx-x extract`) that the
-  compiler turns into `.xdl` on the player's machine, so no game data is redistributed.
-* Room past retail limits: more cars than 33 (`pc_exe.md`), bigger TOC caches, widescreen UI.
+A mod must never contain the game's data: redistributing it, even inside a mod, raises legal
+issues. The format and tools make that the default and check it, instead of leaving it to
+modders. (A technical design, not legal advice.)
+
+* **Reference, don't copy.** A mod names the base data it builds on by a stable asset id
+  (archive, pack type and id, object kind, index: `HW_Cars/car_5/texture/3`) plus a hash of the
+  original bytes. The compiler takes the data from the player's own copy when it builds the cache;
+  the hash confirms the copy is the one the mod expects and reports a different release (GC vs.
+  PC content) clearly instead of building something wrong.
+* **Changes as operations.**
+  * Tweaks to existing objects (handling values, particle colours, timings, menu rows) are
+    field-level patches on the dumped object graph, carrying only the new values.
+  * Edits to game art are recipes the compiler applies ("hue-shift texture T", "overlay
+    `decal.png` on texture T"), not finished pixels: an edited game texture is still derived from
+    it.
+  * New content (a modder's own models, textures, sounds) ships as ordinary sources: glTF, PNG,
+    WAV, JSON.
+* **A packaging check.** `hwvx-x mod pack` indexes every block of base data (texture pixels,
+  samples, geometry arrays, strings, object records, by content hash) from the modder's own
+  install and refuses to package a mod containing any of it, naming the asset to reference
+  instead. That catches the common accident: a folder from `hwvx-x extract` copied into a mod.
+* **Stable ids across releases.** Ids follow the BrainCore structure (pack type/id, object
+  index), which the releases share, so one mod works on whichever release a player owns, and
+  release-only assets are reported as such.
+* **Built on the player's machine.** The compiler merges base data, patches, recipes and new
+  sources into the `.xdl` cache, like the base packs (§2). The cache is never shared.
+* A mods folder is checked before the cache and the source. Room past retail limits: more cars
+  than 33 (`pc_exe.md`), bigger TOC caches, widescreen UI.
 
 ## 9. Open questions
 

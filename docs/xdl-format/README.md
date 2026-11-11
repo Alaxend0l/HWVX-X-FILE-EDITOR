@@ -434,6 +434,61 @@ So a reference is:
 PS2 (retail) likely shares the structure; it needs the same pairing once its formats are known.
 The PS2 prototype differs more (`docs/beta-*`).
 
+### 8.2 As built in HWVX-SDL (step 4e)
+
+**Packing** (`tools/xdl_mod.py`, the manifest is `schemas/Mod.schema.json`):
+
+| command | does |
+|---|---|
+| `index DATA_DIR... -o INDEX.npz` | hashes the modder's own install; made locally, never shipped |
+| `check MOD_DIR --index INDEX.npz` | what `pack` would refuse |
+| `pack MOD_DIR -o OUT.hwmod --index INDEX.npz` | refuses anything that matches the base data; writes a zip of stored entries with `check.json` |
+| `install OUT.hwmod MODS_DIR` | unpacks a package (the same as `hwvx --install-mod OUT.hwmod`) |
+
+`pack` refuses when a mod holds any of these:
+
+* Whole files of the install.
+* Raw 32-byte runs, including hex, base64 or data-URI strings inside JSON.
+* Decoded sound PCM.
+* A texture equal to a base one, or one that looks like a base one: an edited texture is still the
+  game's, so it is made with a recipe instead.
+* Mesh positions equal to a base mesh's.
+* A patch that restates the base value. `--strip-unchanged` drops those instead of refusing.
+
+**Loading** (`src/game/Port_Mods.c`, its API in `Port_Mods.h`):
+
+* **Where:** mods are folders in `mods/` in the preferences folder, or in `HWVX_MODS_DIR`.
+* **Order:** `mods.jsonc` (`order`, `disabled`), then the remaining mods by id, then each mod's
+  `after`.
+* **Entries:** an enabled mod's `cars` and `items` go into `ids.lock` with `alias`, `name`, `mod`
+  and `unlocked`. A mod that is off or gone leaves its entries `"active": false`, so their numbers
+  and saves wait for it.
+* **Patches:** applied as a pack's pointers are fixed up (`FileStreaming_InitializeDataPack`). The
+  fields come from the schemas (`Port_ModFields.inc`, from `tools/gen_mod_fields.py`). A mod
+  entry's own patches apply to its own number's pack only.
+* **Recipes:** colour matrices on the decoded texture (`gx_texmod.c`), composed the same way as
+  `recipe_matrix`.
+* **Report:** two mods setting the same field, recolouring the same texture or bringing the same
+  entry are reported, and the later one applies. A mod put in by hand, with no `check.json`, is
+  reported as unchecked.
+* **Switches:** `HWVX_MODS=0` turns every mod off. `HWVX_MODS_LOG=1` logs each value a patch sets
+  together with its old value.
+
+**Tested:** the sample `tools/mod-samples/night-shift` on GameCube data.
+
+* It packs with no game data found.
+* It installs; a damaged package and one without `check.json` are refused.
+* Its car becomes number 33, and in a race five fields are set: `maxRpm` 7400 → 8200,
+  `turboTorqueScale` 1.15 → 1.3, `steerRate` 6 → 7.5, `damageScale` 0.05 → 0.03, `brakeDecel` 1 → 1.25.
+* Car 7's patch and both recipes apply.
+* Without mods, the attract demo is frame-identical.
+
+**Not done yet:**
+
+* The launcher's Mods page is still a placeholder; it has a hook, `Port_LauncherMods`.
+* Online play doesn't check `Port_ModsActive` yet.
+* Items' patches assume the item's pack number (`Port_ContentItemPack`); only cars were tested.
+
 ## 9. Mixed builds: one game from several releases
 
 A player who owns more than one release can build a cache that takes each asset from the release

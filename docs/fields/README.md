@@ -51,7 +51,8 @@ changes.
 * **Data nobody reads**: WorldGameData 0x40-0x48 (0.3, 80, 0.075 in every world) and four texture
   slots (0x80, 0x84, 0x94, 0x98); CarAInfo 0x28 (f32 1000), two sound sets (0x5C, 0x64), a
   {110², 30²} record (0xAC) and a texture slot (0x44); CarAEngine 0x60 (the same record as CarAInfo
-  0x4C); CarACollider 0x3C/0x40 (a second list like `endFx`); CarAStuntInfo 0x10/0x20/0x24 (0.5, 1,
+  0x4C); CarACollider 0x11, 0x1C, 0x3C/0x40 (**CarACollider is a DestructibleInfo**: same layout, and
+  these hold DestructibleInfo's takesDamage, deathTime and debris list, which the car code skips); CarAStuntInfo 0x10/0x20/0x24 (0.5, 1,
   5); ItemRecord 0x08 (800, 5000, 300: ms?).
 
 ## Not covered
@@ -61,8 +62,8 @@ changes.
   `QuadPack.header`/`gxBase` at 0x28/0x2C), 0x36, 0x44-0x4F.
 * DataPack, DataPackRef, DataPackFileHeader, QuadPack and the geometry/LOD/group structs, for the
   same reason.
-* Wheels (`CarTrailBone`), AI scripts (`AICarScript`, `AIStateInfo`), `DestructibleInfo`,
-  `FlashDef` and the world tile structs: reached through arrays the scan doesn't follow yet.
+* Wheels (`CarTrailBone`), AI scripts (`AICarScript`, `AIStateInfo`), `FlashDef` and the world
+  tile structs: reached through arrays the scan doesn't follow yet.
 
 ### CarAInfo
 
@@ -179,10 +180,10 @@ changes.
 | 0x00 | `inertiaScale` | f32[3] | likely | yes | yes | yes | per-axis factor of the inverse inertia tensor |
 | 0x0C | `pad0C` | u8[4] | - | no | no | no | 0 in every car; never read (GC, PC, PS2) |
 | 0x10 | `type` | u8 | likely | yes | yes | yes | 0: oriented box, 1: convex hull |
-| 0x11 | `pad11` | u8[3] | - | no | no | no | u8s (1, 0, 0 in most cars); never read (GC, PC, PS2) |
+| 0x11 | `pad11` | u8[3] | - | no | no | no | u8s (1, 0, 0 in most cars): DestructibleInfo's takesDamage; never read (GC, PC, PS2) |
 | 0x14 | `maxHealth` | s32 | likely | yes | yes | yes |  |
 | 0x18 | `damageThreshold` | s32 | likely | yes | yes | yes | impacts above it hurt |
-| 0x1C | `pad1C` | u8[4] | - | no | no | no | s32 375 or -1; never read (GC, PC, PS2) |
+| 0x1C | `pad1C` | u8[4] | - | no | no | no | s32 375 or -1: DestructibleInfo's deathTime (ms); never read (GC, PC, PS2) |
 | 0x20 | `mass` | f32 | likely | yes | yes | yes |  |
 | 0x24 | `gravityScale` | f32 | likely | yes | yes | yes | forceAccum.y += gravityScale * mass |
 | 0x28 | `pad28` | u8[4] | - | no | no | no | 0 in every car; never read (GC, PC, PS2) |
@@ -190,7 +191,7 @@ changes.
 | 0x30 | `material` | ptr | certain | yes | yes | yes |  |
 | 0x34 | `numEndFx` | u32 | certain | yes | ? | ? | debris spawned when destroyed, one at random |
 | 0x38 | `endFx` | ptr | certain | yes | ? | ? | (Thing_ProcessEndEvent) |
-| 0x3C | `pad3C` | u8[8] | - | no | no | no | a second list like endFx: u32 1, pointer; never read (GC, PC, PS2) |
+| 0x3C | `pad3C` | u8[8] | - | no | no | no | u32 1, pointer: DestructibleInfo's numDebris, debris; never read (GC, PC, PS2) |
 | 0x44 | `box` | ptr | certain | yes | yes | yes | type 0: min/max corners |
 | 0x48 | `spheres` | ptr | certain | yes | yes | yes | type 7 |
 | 0x48 | `hull` | ptr | certain | yes | yes | yes | type 1 |
@@ -421,6 +422,30 @@ changes.
 | 0x104 | `cameras` | ptr | certain | yes | ? | ? | 12 bytes each (CarACameras) |
 | 0x108 | `numCamerasWide` | u32 | certain | yes | ? | ? | the same for view format 2 |
 | 0x10C | `camerasWide` | ptr | certain | yes | ? | ? |  |
+
+### DestructibleInfo
+
+| Offset | Field | Type | Confidence | GC | PS2 | PC | Notes |
+|---|---|---|---|---|---|---|---|
+| 0x00 | `inertia` | f32[3] | likely | yes | yes | yes | per-axis factor of the inertia tensor |
+| 0x0C | `pad0C` | u8[4] | - | no | no | no | never read (GC, PC, PS2) |
+| 0x10 | `type` | u8 | likely | yes | yes | yes | collision: 0 box, 1 hull, 3 box from the geometry bounds (becomes 0), 4 none, 6 hull, 7 spheres |
+| 0x11 | `takesDamage` | u8 | likely | yes | yes | yes |  |
+| 0x12 | `pad12` | u8[2] | - | no | no | no | never read (GC, PC, PS2) |
+| 0x14 | `maxHealth` | s32 | likely | yes | yes | yes |  |
+| 0x18 | `armour` | s32 | likely | yes | yes | yes | subtracted from each hit's damage |
+| 0x1C | `deathTime` | s32 | likely | yes | yes | yes | ms before a destroyed one is released, <0 never |
+| 0x20 | `mass` | f32 | likely | yes | yes | yes |  |
+| 0x24 | `gravityScale` | f32 | likely | yes | yes | yes | physical objects: force.y += gravityScale * mass |
+| 0x28 | `pad28` | u8[4] | - | no | no | no | never read (GC, PC, PS2) |
+| 0x2C | `angDamping` | f32 | likely | yes | yes | yes | physical objects |
+| 0x30 | `material` | ptr | certain | yes | yes | yes | (Destructible.h; vtable GetSurfaceScript) |
+| 0x34 | `numEndDebris` | u32 | certain | yes | ? | ? | effects spawned when destroyed (Thing_ProcessEndEvent) |
+| 0x38 | `endDebris` | ptr | certain | yes | ? | ? |  |
+| 0x3C | `numDebris` | u32 | certain | yes | yes | yes | effects spawned when the death timer runs out |
+| 0x40 | `debris` | ptr | certain | yes | yes | yes |  |
+| 0x44 | `box` | ptr | certain | yes | yes | yes | type 0, 3 |
+| 0x48 | `hull` | ptr | certain | yes | yes | yes | type 1, 6 |
 
 ### IfaceObjectDef
 

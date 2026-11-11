@@ -59,7 +59,7 @@ XdlSection[numSections]         0x20 each
   u32   id                      the BrainCore pack type/id it belongs to (TOC order)
   u64   offset, size            in the file
   u32   rawSize                 when compressed
-  u32   compression             0 none, 1 zstd   (Open: worth it? see §11)
+  u32   compression             0 none, 1 zstd   (Open: worth it? see §14)
   u32   align
 ```
 
@@ -409,7 +409,94 @@ on that later without changing the format.
 * **Hot reload** in development: the port watches a project folder, recompiles what changed and
   reloads that pack, so tuning is edit, save, drive.
 
-## 11. Open questions
+## 11. Save data
+
+Today's saves are emulated GameCube memory-card files (`<pref>/memcardA/*.sav`, `card.c`) holding
+the game's own save structs: unlocks as **fixed arrays indexed by number** (`HotWheelsGameData`:
+`cars[0x21]`, `tracks[0x39]`, `items[0xC]`, cheats, extras, script values; DD Rescue's world state),
+written **in place** (`r+b`) and guarded by one checksum. That can't hold a 34th car, gives an
+unlock to the wrong car when a mod renumbers them, and a crash mid-write ruins the file. When the
+game runs on `.xdl` data it uses its own save format instead.
+
+### 11.1 Format
+
+* **JSONC, keyed by id, not index**: unlocks and progress against `base://` and `uid://` ids
+  (`"base://HW_Cars/car_5": {"unlocked": true}`), DD Rescue's world state as named records. A
+  removed mod's entries stay, marked inactive, until it comes back; nothing shifts.
+* **Versioned** (`"format_version"`), upgraded by migration, never discarded.
+* The game's code keeps its arrays: on load the save fills them through `ids.lock` (§10.5), on
+  save it reads them back. Content past the retail arrays (a 34th car) is kept by id in the port's
+  own table, which the port's unlock checks consult.
+
+### 11.2 Protection
+
+* **Atomic writes**: write `save.json.tmp`, flush, rename over `save.json`. A save is wholly old
+  or wholly new.
+* **Rotating backups**: the last few saves kept, each with a hash; a damaged current save
+  offers the newest good backup instead of a reset.
+* **Profiles per mod set**: vanilla and modded progress are separate unless the player merges
+  them; a broken mod can't reach the main save.
+* Integrity, not anti-cheat: the format is open and players may edit their own saves.
+
+### 11.3 Importing existing saves
+
+Converting to `.xdl` imports progress from every save the player has, whichever releases:
+
+| source | how | state |
+|---|---|---|
+| the port's own `.sav` files | the game's struct, already in host order | straightforward |
+| GameCube memory card (Dolphin `.gci` files or a raw card image) | read the save file from the card, swap the struct | straightforward; the card file system is documented |
+| PC saves | the same structs in little-endian, the PC's own file | **research**: where the PC keeps them and its header |
+| PS2 memory card (`.ps2` card images, `.psu`/`.max` exports) | the card's file system, then the struct | **research**: the PS2 save layout |
+
+Retail ids are the same on every release (§8.1), so each save maps through its release's numbers
+to the same `base://` ids. Several saves **merge as a union** (an unlock in any counts; for counters
+and best results the highest) with a preview and the choice to import one save only. The
+original files are never changed. An export back to a release's own format remains possible
+where the content is retail-only.
+
+## 12. Extracting existing packs
+
+`.xgc`, `.xpc` and `.xps` packs extract to source projects (§10), so existing content becomes
+something to edit, learn from or build on:
+
+* `hwvx-x extract <pack or folder> <project>`: each pack's objects become JSONC files, its models
+  glTF, textures PNG, sounds WAV, songs `.mid` with their bank. Undecoded bytes as §10.4.
+* **Extraction is local.** An extracted project holds the player's game data; it is for their own
+  use. Anything published (a mod) goes through the packaging check (§8), which turns copied base
+  data back into `base://` references or refuses.
+* The round trip (§10.7) is the test: extract a release, compile it, compare with the direct
+  build.
+* Extraction uses the same per-release readers as the compiler, so a PS2 pack extracts to the
+  same project shape as its GameCube and PC counterparts; `--release` picks one when the player
+  has several, or a mixed extraction applies the rule table of §9.
+
+## 13. Reusable components
+
+A car pack carries its own copies of things many cars share: particle effects, stunt setups,
+the HUD layout, weapon and pickup definitions, AI setups, engine and impact sound sets, damage
+stages. In a project these become **components**: one file each, referenced by uid, reusable by any
+car, world or mod.
+
+* **Extraction finds them.** The extractor fingerprints object subgraphs (an emitter with its
+  particle descriptions and textures, a sound set, a weapon definition) across every pack; a
+  subgraph that occurs in more than one pack becomes one component (`effects/sparks_blue.jsonc`)
+  and every pack that had it references it. One-off subgraphs stay inside their pack's files and
+  can be promoted to components later.
+* **Components can be extended** like any object (`"extends"`, §10.3): a new car takes the stock
+  sparks with another colour without copying them.
+* **The compiler copies them back in.** At runtime each pack keeps its own copy: the game writes
+  into some of these objects (playback state), a BrainCore pack references at most two others,
+  and packs load and unload on their own (§4.6). So sharing is a source-level idea: the compiled
+  pack inlines each component it uses, and only read-only bulk data (pixels, samples) is shared
+  in compiled output too.
+* **Kinds of component** (first list; the fingerprinting pass will show what really repeats):
+  particle and emitter setups; trails and coronas; sound sets; weapons and projectiles; pickups;
+  stunt and combo setups; HUD and interface fragments; AI setups; materials/shaders (animated
+  textures); world props (a model with its collision); triggers and event sequences used as
+  templates.
+
+## 14. Open questions
 
 * Compression: zstd per section costs load CPU but saves disk. Data is ~1 GB per release
   uncompressed; worth measuring before deciding.

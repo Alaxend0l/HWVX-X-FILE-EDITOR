@@ -716,6 +716,18 @@ their unlocks kept in a registry sized to the count, instead of the save struct'
   `ids.lock` (add, remove, re-add, conflicts). The title demo is frame-identical on GameCube
   data.
 
+**Online.** Registered cars and items are numbered by each machine's own `ids.lock`, so a number
+alone can name different content on two machines. `Port_ContentWriteChoice` therefore sends a
+choice past the base content as its id, together with the base entry it is made from. On the other
+machine, `Port_ContentReadChoice` finds it by id; when that machine lacks it, the base entry stands
+in. Base content keeps its number, which is the same everywhere. The protocol is version 2
+(`NET_PROTOCOL`). `savetest` covers both machines' views.
+
+**Tracks.** A registered track becomes a level of its mode's progression and an entry of the
+mode's world select, with its own name, picture and padlock. It loads its alias's world, or its own
+`world`, and is saved by id. For testing: `HWVX_TEST_EXTRA_TRACKS=N`, `HWVX_TEST_UNLOCK_TRACKS`,
+and `HWVX_START=worldselect:mode=M,world=W`.
+
 ### 10.6 Events and missions
 
 The game's scripting is already data (trigger types, action functions, event sequences:

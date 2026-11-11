@@ -513,6 +513,173 @@ on that later without changing the format.
 * **Hot reload** in development: the port watches a project folder, recompiles what changed and
   reloads that pack, so tuning is edit, save, drive.
 
+### 10.8 As built: packs to projects and back (step 3c)
+
+HWVX-SDL `tools/xdl_graph.py` (whole packs) and `tools/xdl_gltf.py` (geometry), on top of
+`xdl_struct.py` and the generated schemas ([`schemas.md`](schemas.md)). They work on
+`hwvx-x extract` trees. The port is not involved: it still compiles packs to its `.xdl` cache (§5.1).
+
+```
+xdl_graph.py extract-archive <extracted archive> <project archive>   archive.jsonc + one folder per pack
+xdl_graph.py build-archive <project archive> <out>                    packs + manifest.json (hwvx-x pack's input)
+xdl_graph.py extract <pack> <project pack> / build <project pack> <out> [--check <pack>]
+xdl_graph.py roundtrip <survey> [--rel gc,pc,ps2] [--archive ..] [--orig <orig>]
+xdl_gltf.py export <pack> <out>                                       the geometry alone
+```
+
+**Nodes.** A pack's blob is cut at every pointer and local-ref target, at the header's tables
+(each texture header, shader and trigger record, the palettes) and at every geometry. Two
+things claim their whole extent, so a pointer into them is an interior link and not a cut:
+
+* a geometry, from its header to the last byte its levels use;
+* an object of a schematised struct (the 14 schemas). The roots, the Port_Swap walkers'
+  labels and links from typed fields find these. An object is typed only if no scalar field
+  sits on a relocation slot and its links match their slots' kinds; otherwise it stays raw.
+
+A node runs to the next cut. A GameCube car has about 2,800 nodes.
+
+**Ids: the canonical path.** Every node gets one `base://<archive>/<pack>/...` id:
+
+1. **Fixed ids.** `geometry/N` and `texture/N` (pairing.md: the GameCube's index, via the pairing
+   table on the other releases), `shader/N`, `trigger/N`, `palette/0`, the root table's entries
+   (`CarAInfo/0`, `ItemRecord/i`, `IMHeader/i`, `SoundSeq/i`), and `World/0` or `header/0` for
+   offset 0.
+2. **Paths.** Every other node is named by the **first path that reaches it**: breadth-first from
+   the root entries, then from the other fixed ids and from offset 0, with each node's slots in
+   offset order. The shortest path wins, and ties go to the earlier root and lower offset.
+   * A step is the field path where a schema covers the slot (`CarAInfo/0/engine`,
+     `.../aiScripts/2`, the same as xdl_struct's links), or `p<hex offset>` elsewhere
+     (`CarAInfo/0/rollSound/p18`).
+   * Repeats of one step are counted: `p0_r12` is twelve `p0` steps (linked lists).
+   * Any other path to the same node is a link to that id. Car 5's three `aiScripts` slots that
+     hold one script all read `.../aiScripts/0`.
+3. **Orphans.** Nodes no root reaches are `orphan/K`, in blob order.
+
+A link into a node is `<id>/o<hex offset>`. Inside a geometry it is a structural name
+(`geometry/3/level/0/group/2`, `.../uvscroll`, `.../vertices`), so the link still holds after the
+geometry is re-encoded.
+
+**Files.** One file per object. A car folder holds `CarAInfo/0.jsonc`,
+`CarAInfo/0/engine.jsonc`, `geometry/14.gltf`, `texture/3.jsonc` and so on, about 620 files and
+5 MB on GameCube.
+
+* **Typed objects:** the xdl_struct JSONC (`$schema`, `extends` its own id). The bytes the JSON
+  doesn't carry (hidden fields, padding, the node's tail, and the links in them) go in
+  `<name>.base.jsonc`. This is the scrubbed base of schemas.md §6, kept in the project, so a
+  build doesn't need the original pack.
+* **Geometry:** `geometry/N.gltf` and `.bin`, plus `N.xgeo.jsonc` and `N.orig.bin`, which hold the
+  original encoding, its links, the interior anchors and the glTF's content hash.
+* **Everything else:** a raw record with:
+  * `bytes` (hex lines; a `.bin` above 256 bytes), with pointer and local-ref slots zeroed;
+  * `links`, `textures`, `sounds`, `refs` and `shaders` by slot offset;
+  * `type`, the walker's label, where there is one.
+
+  A raw node gets its own file if it is a root, a texture, shader or trigger, an orphan, 4 KB or
+  larger, or labelled with a component kind (comp_survey.KINDS). The rest (key tracks, strings,
+  small arrays) sit in their canonical parent's file under `children`. So a subgraph is a
+  folder: an EventSeq with its emitters is `.../explosionThing.jsonc` and `.../explosionThing/`.
+  A component (§13, task 4a) is that folder moved out and given a uid.
+
+**pack.jsonc and pack.order.json.**
+
+* `pack.jsonc` holds:
+  * pack.json, with the header's data offsets as links;
+  * the manifest entry;
+  * the layout: node order, alignment and file;
+  * the sound sections, copied as files for the media step.
+* `pack.order.json` holds the relocation tables' original order as (layout index, offset)
+  pairs. The pointer lists are in the exporter's traversal order, not sorted, in 505 of 511
+  GameCube packs. A build keeps that order for slots that still exist and appends new ones
+  sorted.
+
+**Build.**
+
+1. Every node is encoded:
+   * a raw record from its bytes;
+   * a typed object by xdl_struct's encoder over its base, with links kept symbolic;
+   * a geometry from its original bytes while the glTF hashes as extracted, otherwise encoded
+     afresh.
+2. The nodes are laid out in order, each at its alignment. Unchanged sizes give the original
+   offsets.
+3. Links resolve to offsets, and the tables and pack.json are written:
+   * a texture or sound link goes back to its index through the pairing table;
+   * a local ref's value is the target's index in the geometry scan.
+
+A node that grows or shrinks moves everything after it, and every link follows. The tests grow a
+record by 16 bytes and extract the built pack to the same objects.
+
+**glTF.**
+
+* **Nodes and meshes.** One file per geometry. Its root node `geometry_N` carries the header,
+  the LOD distances and the level records in `extras`. Each level is a child node (`lod0`, ...)
+  with its own mesh, and its distance in `extras`.
+* **Primitives.** A group is a primitive. Its `extras.group` holds flags, colour, blend, sort key,
+  the raw texture slot and the uvScroll record.
+* **Materials.** A material carries the texture as a `base://` id in `extras.texture`, with no
+  image. The PNGs of the media step are found by that id, not by path.
+* **Attributes:**
+  * POSITION and TEXCOORD_0;
+  * NORMAL for lit and env-mapped groups, COLOR_0 (u8, GameCube scale) for the others, as the
+    draw code reads them;
+  * NORMAL is normalised for the validator; when the source's normals aren't unit length, the
+    exact ones are kept in `_NORMAL_RAW`.
+* **Skinning.** A skinned geometry gets a skin over 8 bone nodes and one JOINTS_0 bone per
+  vertex with weight 1.0. Positions stay bone-local, as stored, and the per-bone counts are in
+  the level's extras.
+* **Shadow volumes** are LINES primitives (their edges) with the edge normals in extras.
+* **Validator.** The Khronos glTF Validator reports 0 errors on every car geometry on all
+  three releases (1,847 files) and on 1,980 world, quad, item and interface geometries; the
+  remaining notices are info-level.
+* **Encoding edited geometry.** GameCube display lists and PC index lists are written afresh,
+  with per-attribute arrays deduplicated and skinned vertices sorted by bone. The bounding box,
+  radius and centre are recomputed (geometry.md §1.1).
+* **Not decoded or encoded on PS2.** Edited PS2 geometry (VIF packets) isn't encoded yet; the
+  build refuses it. PS2 shadow volumes (kind 3 levels, which point to a packet of their own)
+  aren't decoded and stay raw bytes beside the glTF.
+
+**Round trip** (`roundtrip --orig`: every pack extracted, built and compared file by file, then
+each rebuilt archive put through `hwvx-x pack` and compared with the original file):
+
+| release | packs | byte-identical | archive files identical |
+|---|---|---|---|
+| GameCube | 512 | 512 | 105 / 105 |
+| PC | 506 | 506 | 99 / 99 (against the pristine `orig/pc-backup`, then `orig/pc`) |
+| PS2 | 512 | 512 | 105 / 105 |
+
+Every pack kind is covered: cars, worlds, world textures, quad geometry, collision, interface,
+items, share, audio, music and link. On GameCube the 512 packs make 1.17 million nodes, with
+4,313 typed objects and 21,652 geometries. A whole release extracts and builds in about 6
+minutes and takes 2.2 GB.
+
+**Typed so far**:
+
+* CarAInfo and its 5 parts in every car;
+* DestructibleInfo, WorldGameData and CreatureInfo in worlds;
+* ItemRecord, WeaponInfo and ProjectileInfo in items.
+
+The rest of the graph is raw records. By walker label, the most common are:
+
+| category | labels |
+|---|---|
+| interface | StateAnim, ObjAnim, ObjState[], CondList, ObjSub, TextInfo, IMHeader, IMObject[] |
+| key tracks | keys.vec4, keys.active, keys.color, keys.uv |
+| effects | ParticleEmitter, Particle, EventSeq |
+| sound | SoundSeq, Sound |
+| world | ThingRecord, Trigger, TileCar |
+
+Nodes no walker labels (about 260,000 on GameCube) are the largest group. Each label is a
+schema to write.
+
+Marking the headers' link fields for this step (`@xdl:` on ItemRecord.hudName/pickupDebris,
+WeaponInfo.hudIcon, ProjectileInfo.geometry/holeTexture/trailFx/impactFx/expireFx,
+WorldGameData.mapTexture/radarBlip/lightTexture/envmapA/envmapB) made those objects typable.
+Three things are still to fix:
+
+* WeaponInfo `unk_0x1C` (u8[4]) holds a pointer;
+* ProjectileInfo `slaves` (u8[8]) holds a pointer at +4;
+* a geometry slot that holds a share pack's export has no link form yet, so those
+  ProjectileInfo objects stay raw.
+
 ## 11. Save data
 
 Today's saves are emulated GameCube memory-card files (`<pref>/memcardA/*.sav`, `card.c`) holding
@@ -724,7 +891,7 @@ something to edit, learn from or build on:
   and is done. So extraction does **not** go through the port's readers: the tools have their own
   per-release readers, and the byte-exact round trip is what keeps them honest. `xdl_struct.py`
   converts pack structs ⇄ JSONC from the generated schemas ([`schemas.md`](schemas.md)),
-  `xdl_media.py` the bulk data (§12.1); models and object graphs get tools of their own.
+  `xdl_media.py` the bulk data (§12.1), `xdl_gltf.py` the models and `xdl_graph.py` whole packs: object graph, models and every other byte, so a pack builds back byte for byte (§10.8, step 3c).
 * Every release extracts to the same file kinds under the same `base://` ids
   ([`pairing.md`](pairing.md)), each copy in its own release's encoding; `--release` picks one when
   the player has several, or a mixed extraction applies the rule table of §9.

@@ -154,10 +154,10 @@ a CarAAccel) is refused.
 
 ## 7. Open questions
 
-* **Object ids.** `<Struct>/<root index>/<field path>` is new here. It reads well and is the same
-  on every release, but an object reachable by two paths gets two ids. The extractor uses
-  the field it reads. It should settle on one canonical path once sub-objects get their own
-  files.
+* **Object ids** (settled in step 3c, [`README.md`](README.md) §10.8). An object is named
+  by the first path that reaches it, breadth-first from the roots. A step is the field path
+  where a schema covers the slot, else `p<hex offset>`. Other paths to it are links to that
+  id. `xdl_graph.py` names every node of a pack this way.
 * **Counts beside arrays** (`numGears` + `gears`) are kept as separate fields while the arrays
   are still links into the base. Once arrays are inline, the count should come from their length.
 * **`CarAInfo.soundSets`** is typed `PTR32(PTR32(CarASoundSet))` with `numSoundSets = 5`, but

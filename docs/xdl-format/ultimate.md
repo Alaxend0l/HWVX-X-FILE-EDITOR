@@ -23,7 +23,7 @@ differences (three-cornered hat, §1.4).
 | resolution, mip chains | any | no texture changes size between releases; mips are regenerated (GameCube chains stop at 16×16, PC/PS2 go to 1×1) |
 | geometry | **GameCube** (= PS2 triangles, full colour precision) | identical LOD counts, attributes and skinning everywhere; PS2 loses 1,103 triangles, 1 colour bit and 2 alpha bits; PC differs only in content edits (car_21 better LODs, car_25 coarser body, world props: §2) |
 | sound effects, briefing voices, instrument banks | **GameCube** | PCM16, a superset of the PC's (byte-identical samples), PS2 is the same audio as 4-bit ADPCM |
-| music (MIDI songs) | any | byte-identical on all three |
+| music (MIDI songs) | GameCube (or PS2) | byte-identical on all three except one song the PC edited (7 world-pack copies, 31224 vs 31218 bytes; [`pairing.md`](pairing.md)) |
 | movies, video | **GameCube** THP | 9.3–9.6 Mbit/s MJPEG, lowest own error (0.6–2.1 levels vs PC 1.0–2.4, PS2 3.2–5.5) |
 | movies, audio | **PS2** (from the header: PCM s16 48 kHz) | THP is 4-bit ADPCM, Bink is lossy DCT; PS2 PCM not decoded here (§4) |
 | movies only one release has | PC `hw_gal`, `hw_mark`; PS2's longer `hwboot` | §4 |
@@ -231,7 +231,7 @@ distinct positions, vertices, normals/colours present, skinned.
 * **Briefing voices** (`audio_/HWB_M01–14`): the same on all three retail releases, 233 sounds,
   1,250.7 s (counts and durations equal per archive; GameCube = PC bytes, PS2 ADPCM). The PS2
   prototype has different dialogue: 174 sounds, 1,238.9 s ([`../beta-audio/README.md`](../beta-audio/README.md)).
-* Songs (`RIFX` MIDI): byte-identical on all three.
+* Songs (`RIFX` MIDI): byte-identical on all three, except one song the PC edited (7 world-pack copies; found by the pairing table, [`pairing.md`](pairing.md)).
 
 ---------------------------------------------------------------------------------------------
 ## 4. Movies

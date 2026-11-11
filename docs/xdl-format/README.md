@@ -531,16 +531,17 @@ Converting to `.xdl` imports progress from every save the player has, whichever 
 | source | how | state |
 |---|---|---|
 | the port's own `.sav` files | the game's struct, already in host order | straightforward |
-| GameCube memory card (Dolphin `.gci` exports; raw card images still to add) | `GHWE78` file `hwvx`: one 0x2000 block after the 0x40-byte `.gci` header; name and comment, banner and icons (0x800), then at +0x840 the save in the same layout as the PS2's, **big-endian**, checksum verified | **decoded** |
-| PC saves (`My Documents\VelocityX Saved Games\velocityX`) | one file, 8 slots of the GameCube's `HotWheelsGameData` in little-endian after a 0x194-byte header and settings block, checksum verified ([`../pc-version/README.md`](../pc-version/README.md) "Save files") | **decoded** |
-| PS2 memory card (`.ps2` card images) | the card's file system (`ps2_mcd.py`), then `BASLUS-20412/BASLUS-20412`: the GameCube's save layout in little-endian, checksum verified ([`../ps2-version/README.md`](../ps2-version/README.md) §5.5) | **decoded**; `.psu`/`.max` exports still to add |
+| GameCube memory card (Dolphin `.gci` exports, raw card images) | `GHWE78` file `hwvx`: one 0x2000 block after the 0x40-byte `.gci` header, or found through a card image's directory and block map; name and comment, banner and icons (0x800), then at +0x840 the save, **big-endian**, checksum verified | **imported** (§11.5) |
+| PC saves (`My Documents\VelocityX Saved Games\velocityX`) | one file, 8 slots of the GameCube's `HotWheelsGameData` in little-endian after a 0x194-byte header and settings block, checksum verified ([`../pc-version/README.md`](../pc-version/README.md) "Save files") | **imported** |
+| PS2 memory card (`.ps2` card images, `.psu` exports) | the card's file system (`ps2_mcd.py`), then `BASLUS-20412/BASLUS-20412`: the GameCube's slots in little-endian after **packed** settings, checksum verified ([`../ps2-version/README.md`](../ps2-version/README.md) §5.5) | **imported**; `.max` not (its LZARI compression isn't implemented) |
 
 All three releases store the same file: `SAVE_FILE_MAGIC` 4, size, the game's checksum (sum of
-byte + 1), `GeneralGameSettings` (0x150; the PC's 0x38 bytes longer), then 8 × 0xF4
-`HotWheelsGameData` slots. GameCube big-endian, PC and PS2 little-endian. Saves made after the same
+byte + 1), `GeneralGameSettings` (0x150; the PC's 0x38 bytes longer, the PS2's packed), then 8 ×
+0xF4 `HotWheelsGameData` slots. GameCube big-endian, PC and PS2 little-endian. Saves made after the same
 progress (Challenge 1) on all three hold the same tracks, items, extras and script values; the
 cars differ only by the releases' defaults (GameCube 3–5, its 0–2 coming from the GBA link; PC
-and PS2 0–5). An import keeps the union, so a GameCube player importing a PC save gains cars 0–2.
+and PS2 0–5). An import keeps the union; the PC's and PS2's cars 0–2 are their defaults, so a
+GameCube player importing such a save gets them only by choosing to (§11.5).
 
 Retail ids are the same on every release (§8.1), so each save maps through its release's numbers
 to the same `base://` ids. Several saves **merge as a union** (an unlock in any counts; for counters
@@ -594,14 +595,98 @@ preferences folder elsewhere for tests.
   Game screen loads after a restart; a damaged save boots from its backup. With the switch off
   the title demo is frame-identical.
 
-**Left for 4d (importing other releases):** `Port_SaveFromBinary` already reads a `SaveFile` in
-either byte order with its checksum, so the GameCube's `.gci` (+0x40+0x840, big-endian) works
-today in the test. Still to do: the PC's longer settings block (0x188, its 0x38 extra bytes not
-mapped; the slots are the GameCube's struct) as a separate reader; raw GameCube card images; the
-PS2 card file system (`ps2_mcd.py` in C) and `.psu`/`.max`; DD Rescue's `playerStats` in the
-other byte order (left as bytes); importing into an existing JSON save as a union (highest
-counters) with a preview and a choice of one save, rather than only when none exists; and a
-way for the player to pick files (launcher).
+Importing other releases' saves into an existing save: §11.5.
+
+### 11.5 As built in HWVX-SDL (step 4d): importing every release's saves
+
+Branch `saveimport` of HWVX-SDL. `src/game/Port_SaveImport.c` reads the containers and merges;
+the launcher's **Import saves...** is the player's way in. It writes through the store of §11.4
+(so it works whether or not `HWVX_SAVES=json` is set; the game reads the result with the
+switch on).
+
+**Containers** (`Port_SaveImportRead` tells them apart by content, not by name):
+
+| container | release | how it is read |
+|---|---|---|
+| the port's `memcardA/hwvx.sav` | GameCube | the card file (name, comment, banner, icons), the `SaveFile` at +0x840 in the order of the machine that wrote it |
+| Dolphin `.gci` | GameCube | the 0x40-byte directory entry (`GHW?` by maker `78`, file `hwvx`; any region), its block count matching the size; the card file follows |
+| raw card image (Dolphin `MemoryCardA.*.raw`) | GameCube | block 0 header; blocks 1-2 the directory and its backup (127 × 0x40 entries, update counter at 0x1FFA, checksums at 0x1FFC over 0..0x1FFC); blocks 3-4 the block map and its backup (checksums at 0 over 4..0x2000, counter at 4, u16 next block for blocks 5.., 0xFFFF the last). Checksums are the SDK's: the sum of big-endian u16s and the sum of their complements, 0xFFFF read as 0. The good copy with the newer counter is used; the file's blocks are followed through the map, bounds and length checked |
+| `velocityX` | PC | magic 4, size 0x928, checksum over its own 0x928 bytes; the settings moved into the GameCube's layout (below) |
+| `BASLUS-20412` (the file itself) | PS2 | magic 4, size 0x8F0, checksum; packed settings moved into the GameCube's layout (below) |
+| PCSX2 `.ps2` card image | PS2 | `ps2_mcd.py` in C: superblock, two-level FAT, 512-byte directory entries, raw pages with 16 ECC bytes skipped when the size says so. `BASLUS-20412/BASLUS-20412` first, else any folder holding a file of its own name that reads as a save (other regions). A subdirectory's entry count is the one in its parent's entry (its own `.` entry doesn't hold it); the root's is in its `.` |
+| `.psu` (uLaunchELF export) | PS2 | the folder's 512-byte entry (the card's directory entry format), `.` and `..`, then each file's entry and its bytes padded to 1 KB; the file named as its folder is the save |
+| `.max` (Action Replay MAX) | PS2 | recognised (`Ps2PowerSave`) and refused: its LZARI compression isn't implemented, so it would be guesswork; export as `.psu` or import the card image |
+
+Doomsday Rescue saves are recognised by their size and refused (Hot Wheels progress only).
+
+**Settings layouts**, moved into the GameCube's before `Port_SaveFromBinary` reads the result
+(each file's own checksum is checked first, over its own bytes):
+
+* **PC**: settings 0x188 = s32 difficulty, audio (4), **4 × 0x20 controller settings**, 8 × 0x20
+  slot entries at +0x88. Each player's 0x20 bytes are the GameCube's 0x12 (`data[0]` vibration,
+  code variable 0xD1; `data[1]` control scheme, 0xCE; 16 bytes of the MCP binding, the same bytes
+  on all three releases) followed by a 13-byte gamepad button map (`10 11 9 7 8 6 4 5 3 2 12 13 1`
+  by default, the PC decomp's `func_00429F10`) and one byte of padding: 4 × 14 = the 0x38 extra
+  bytes. The button map is read (`PortPCControls`) but not imported.
+* **PS2**: settings 0x150 but packed: **u8** at +0 (the GameCube's s32 difficulty; the PS2's
+  `GameSetting_Init` sets it to 1, the GameCube's to 0, so it isn't carried over), audio at +1,
+  controllers at +5 (`GameSettings_GetControllerSettings`: base + 5 + 0x12 × (player − 1)), 3
+  bytes of padding, slot entries at +0x50 as the GameCube's. The slots after the settings are the
+  GameCube's struct.
+
+The example saves through every container agree: the three Challenge 1 saves hold the same
+tracks (0, 5, 19-22, 29-32, 39, 40), items (0-3), extras, cheats and script values; the cars
+differ only by the defaults (GameCube 3-5, PC and PS2 0-5).
+
+**The merge** (`Port_SaveImportMerge`, a pure function on two `SaveFile`s; Hot Wheels saves):
+
+* Slot by slot: a save goes into the store's save **of the same name**, else into the first
+  free slot as a new save (its name, date, vehicle and item); with eight saves and none of that
+  name it is skipped (the preview says "no room").
+* **Unlocks** (cars, tracks, items, cheats, extras): the higher value of the two, so an unlock
+  in either counts and a value other than 1 isn't lowered. Nothing is ever cleared.
+* **Script values** (the 30 `miscValues`, the MCP script's own numbers): taken **as a set**
+  from whichever save is further on (more unlocked cars, tracks, items and extras); a tie keeps
+  the store's. A per-value maximum could combine values no game ever wrote; a whole set from
+  one save can't.
+* The store's name, chosen vehicle and item and settings stay; the date becomes the later one.
+  With no save yet, the settings come from the first file (in the GameCube's layout).
+* **Default cars**: cars 0-2 of a PC or PS2 save are that release's defaults (the GameCube's come
+  from the GBA link), so they are not taken unless the player asks (`defaultCars`); the preview
+  lists them as "3 default cars (0 1 2) left out" and the launcher shows the choice. A
+  GameCube save's cars 0-2 are real unlocks and always count.
+* `onlySource`/`onlySlot`: one save of one file only.
+
+**Preview and import:** `Port_SaveImportPreview` merges into a copy of the store's save read by
+`Port_SavesPeek`, which writes nothing: with no JSON save yet it reads `memcardA/hwvx.sav` in its
+place (what the store would import first), so the preview shows the merge the import will do.
+`Port_SaveImportApply` reads the save through the store (importing `memcardA` first, marker and
+all, as §11.4), merges, and writes it with `Port_SavesWriteImported` (atomic, the save before kept
+as `hwvx.1.json`; `imported_from` set if the save had none). An import that changes nothing
+writes nothing. A damaged save with no good backup is refused, not replaced. Source files are
+only ever read.
+
+**Launcher:** a Saves row, **Import saves...**: the system's file dialog (several files; "All
+files" for the PC's extensionless `velocityX`). Each file is read; one that fails says why in
+the status line. The preview lists the files (release, container), where they go ("Into:"),
+and per save what it adds (car, track, item numbers; extras, cheats, values raised, script
+values, the default cars left out). Choices: **Saves:** cycles every save / one save; **[ ] Add
+cars 0-2 too** (shown when a PC or PS2 file is in); **Import**, **Add file...**, **Cancel**
+(Escape, B). Mouse, keyboard and gamepad as elsewhere. `HWVX_LAUNCHER_IMPORT="FILE;FILE"` opens
+the preview on start (for tests and screenshots with `HWVX_LAUNCHER_SHOT`).
+
+**Tests:** `tools/saveimporttest.c` (`ctest -R saveimporttest`), with the example saves
+(`HWVX-SDL/build-saves`, `orig/`, found by CMake): every save through every container (the
+`.gci`; a `memcardA` `.sav` and a raw card image made around the `.gci`'s own card file, its
+blocks out of order and its backup directory stale; `velocityX`; the PS2 file, the real `.ps2`
+card and a `.psu` made from its file); the three releases' Challenge 1 saves agree, also as JSON
+ids; the merge rules; the default-car choice; one save; the preview writing nothing; a second
+import changing nothing; `memcardA` imported first; damaged cards (directory, block map, chain,
+superblock, FAT), cut and damaged files, `.max`, DD Rescue and junk refused with a reason; the
+sample files unchanged at the end. 143 checks, also under ASan/UBSan.
+
+Not done: DD Rescue's saves (its `playerStats` in the other byte order are still bytes);
+`.max`, CodeBreaker and X-Port exports; exporting back to a release's format.
 
 ## 12. Extracting existing packs
 

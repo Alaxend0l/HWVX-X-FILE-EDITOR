@@ -556,18 +556,17 @@ not shuffle anyone's save. Base content keeps its retail numbers.
 
 #### 10.5.1 As built in HWVX-SDL: the content registry
 
-Branch `registry` of HWVX-SDL (`src/game/Port_Content.c`, `Port_ContentData.c`). The game's
-cars, tracks and items (code variables 0x64, 0x65, 0x66) are counted from the data and their
-unlocks kept in a registry sized to the count, instead of the save struct's `cars[0x21]`,
+Branches `registry` and `registry2` of HWVX-SDL (`src/game/Port_Content.c`, `Port_ContentData.c`).
+The game's cars, tracks and items (code variables 0x64, 0x65, 0x66) are counted from the data and
+their unlocks kept in a registry sized to the count, instead of the save struct's `cars[0x21]`,
 `tracks[0x39]`, `items[0xC]`:
 
 * **Numbers.** 0..retail-1 are the struct's arrays; then base content past them that the data
   has (a 34th pack in `HW_Cars` is `base://HW_Cars/car_33`); then entries registered by id
-  (`Port_ContentRegister`: the mod hook, which a project's `ids.lock` will feed in its order;
-  a stub, there is no mod loading yet). Cars are counted from `HW_Cars`' TOC (33 on every
-  release); the game itself never learns a count: tracks are numbers the interface scripts set
-  and test, in families, and items the `HW_Items` packs 0-11 (16-79 are the AI's), so both stay
-  the array's count plus registered entries.
+  (`Port_ContentRegisterEntry`: a project's `ids.lock`, the test switches). Cars are counted from
+  `HW_Cars`' TOC (33 on every release); the game itself never learns a count: tracks are numbers
+  the interface scripts set and test, in families, and items the `HW_Items` packs 0-11, so both
+  stay the array's count plus registered entries.
 * **The struct stays.** `HotWheelsGameData` keeps its layout (memory card files, imports) as the
   view of the retail entries: every write goes to both, and where the game replaces the struct
   (a new game, a load, the end of an online session) the registry takes it back. Entries past
@@ -578,16 +577,89 @@ unlocks kept in a registry sized to the count, instead of the save struct's `car
   the car and item selects' ranges (the carousel variables that number entries, min 0 max
   retail-1, are widened to the count as the screen is created; with the retail counts nothing
   changes); the results screens' car names (variables reading code variable 0xCB); online's
-  car clamp. An extra car or item whose number its archive has no pack for loads the pack it
-  aliases (`DataPack_LoadFile`), its scripts renumbered to its own once loaded.
-* **Tests.** `HWVX_TEST_EXTRA_CARS=2` (cars 33-34 aliasing 3-4) and `HWVX_TEST_EXTRA_ITEMS=2`:
-  shown in the car and item selects, unlocked, selected, raced, and persisted in the JSON save;
-  the title demo is frame-identical on GameCube, PC and PS2 data; `savetest` covers the registry
-  and an extra car's save round trips.
-* **Left:** names and thumbnails come from the interface packs' lists (36 car entries on every
-  release; an index past a list shows its last entry), so a mod's car needs its own entries
-  there; a registered item numbered 16-79 collides with `HW_Items`' own packs; a new track needs
-  its own interface entries and progression level, which is data.
+  car clamp. An extra car whose number `HW_Cars` has no pack for loads the pack it aliases
+  (`DataPack_LoadFile`), its scripts renumbered to its own once loaded.
+* **Names and pictures.** The selects show an entry through lists indexed by its number, in the
+  interface pack: a picture (an image whose texture key is the carousel variable: 36 keys for
+  the cars on every release, 14 for the items), a name (a text list, 36 / 12) and a paragraph
+  (how to unlock it). Past a list's end the last entry shows, and keys between the base count
+  and the list's end are the pack's own (a "?"). As a screen is created, each list it numbers by
+  a kind's variable is replaced by a copy as long as the count (shared by content, kept for the
+  run): a registered entry's picture is the texture its `thumbnail` link names
+  (`base://<archive>/<type>_<id>/texture/<n>` of a loaded pack, §8.1), else its alias's; its name
+  its `name`, else the alias's followed by its `suffix` (the test switches: `" (test)"`); its
+  paragraph blank. The carousel's window variables start at neighbouring entries modulo the
+  retail count (the item select's left windows at 10 and 11 for item 0); widened, they're
+  rebased around the middle window so they stay neighbours modulo the new count.
+* **HUD icons.** The race HUD's item icon is not a list: it is the item's own `WeaponInfo.hudIcon`
+  (a texture of its `HW_Items` pack, `InterfaceHudInfo.weaponIcon`), so an extra item shows its
+  pack's icon: an aliasing one its alias's (item 13 aliasing Armor Repair shows its wrench), a
+  mod's the one its pack brings.
+* **Item numbers are not pack ids.** `HW_Items` packs 0-11 are the 12 items, but 16-79 are the
+  AI's and the worlds' own, loaded by pack id by world scripts and spawn points. So registered
+  items are numbered 12, 13, ... with no gap, and the places that turn the player's item (code
+  variable 0xCC, the item select's list) into a pack go through the registry
+  (`Port_ContentItemPack`): an aliasing item loads its alias's pack and script, one with data of
+  its own a pack numbered past the archive's last (where a mod's build puts it). The release
+  does the same kind of mapping itself (item 3 loads pack 0x4D with a cheat). Cars need none:
+  they are numbered past `HW_Cars`' highest pack.
+* **`ids.lock`.** JSONC, the project's (`HWVX_IDS_LOCK`, else `ids.lock` in the preferences
+  folder), read once as the game settings start (`Port_ContentLoadLock`):
+
+  ```jsonc
+  {
+    "format_version": 1,
+    "next": {"cars": 36, "tracks": 57, "items": 13},   // never goes down
+    "cars": {
+      "uid://8f2c...": {"number": 33, "alias": "base://HW_Cars/car_3", "name": "Alpha",
+                        "thumbnail": "base://HW_IPack/interface_6/texture/70", "unlocked": false},
+      "uid://41a0...": {"number": 34, "alias": "base://HW_Cars/car_4", "active": false},
+      "uid://77d1...": {"alias": "base://HW_Cars/car_5"}   // no number yet: the game assigns 35
+    },
+    "tracks": {},
+    "items": {"uid://c3d9...": {"number": 12, "alias": "base://mcp/item/2"}}
+  }
+  ```
+
+  Entries are registered at their numbers, in number order. One without a number, or with a
+  number base content or another entry has, gets the next past every number the file ever gave
+  (`next`), and the file is written back (its other fields kept). So an entry keeps its number
+  for good: removing an entry leaves its number unused, adding it back with its number restores
+  it, and saves (keyed by id) are right throughout. `"active": false` keeps a number reserved
+  for content that's away; so does an entry without an `alias` (data of its own: no mod loading
+  yet). A reserved number, and any between registered ones, is a placeholder: never unlocked, no
+  id to save by, base entry 0's data, shown as the lists' own last entry with no name. An
+  unreadable file is left alone.
+* **Archives of any size.** The file layer kept 50 TOC entries per archive type and read an
+  archive's first 0x800 bytes (84 entries); `HW_Items` already has 49, and an archive with more
+  packs (a mod's) overran the cache. TOCs are now read whole (`DataPack_LoadFile`, the worlds'
+  quadrant TOC, the registry's scan).
+* **Tracks: what a new one needs.** Nothing loads by track number: the number (0x65) is what the
+  interface scripts and worlds test for unlocks and show names by. A mode's world select is a
+  carousel over two parallel variables: the progression level index (0..levels-1, its pictures
+  and the 0xF event's argument, `StateProgressionManager_SetProgressionID(mode, index)`) and the
+  track number in the mode's family (its names and unlock paragraphs, one 57-entry list shared
+  by all the selects: Joyride 0-4, missions 5-18, battles 19-26, drag races 29-34, challenges
+  39-56 on the GameCube). The level index picks the MCP progression script's level: world name,
+  pack, steps, win and lose sequences. So a new track is: a level in the mode's progression
+  script, a world archive (world, collision, texture, quadrant geometry packs, its own scripts
+  setting 0x65 for what it unlocks), a track number (past the families: 57, 58, ..., which the
+  registry already counts and saves), and its entries in the select: a picture, a name, a lock
+  condition on its number, the carousel's ranges. The registry side is cheap and could extend
+  the select the way it does the car select, but without a level in the progression script
+  there is nothing to start, so a new track is mod and data work (an MCP overlay and a world
+  archive, §10.3) before the port needs anything more.
+* **Testing.** `HWVX_TEST_EXTRA_CARS=2` / `HWVX_TEST_EXTRA_ITEMS=2` (aliasing cars 3, 4 and
+  items 0, 1, named after them with " (test)"), `HWVX_TEST_UNLOCK_*`, `HWVX_IDS_LOCK`;
+  `HWVX_START` opens a mode's menu, world select, car or item select, or starts a race, skipping
+  the menus before it; `HWVX_MENUDUMP=1` logs every list a screen shows (names, pictures,
+  paragraphs, ranges) and the progression scripts' levels, so checks are greps. `test_content`
+  (ctest, headless, about a second) boots the game per scenario with a stub renderer and checks
+  that log against the GameCube data: the retail car select, extra cars and items, an
+  `ids.lock`, item 16 loading pack 4, an `HW_Items` of 129 packs, and each mode's world select
+  against its progression script; `savetest` covers the registry, an extra car's save and
+  `ids.lock` (add, remove, re-add, conflicts). The title demo is frame-identical on GameCube
+  data.
 
 ### 10.6 Events and missions
 

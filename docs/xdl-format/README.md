@@ -554,6 +554,41 @@ numbers**. The compiler assigns them from uids and records the assignment in **`
 (committed with the project), so a car keeps its number across builds and installing a mod does
 not shuffle anyone's save. Base content keeps its retail numbers.
 
+#### 10.5.1 As built in HWVX-SDL: the content registry
+
+Branch `registry` of HWVX-SDL (`src/game/Port_Content.c`, `Port_ContentData.c`). The game's
+cars, tracks and items (code variables 0x64, 0x65, 0x66) are counted from the data and their
+unlocks kept in a registry sized to the count, instead of the save struct's `cars[0x21]`,
+`tracks[0x39]`, `items[0xC]`:
+
+* **Numbers.** 0..retail-1 are the struct's arrays; then base content past them that the data
+  has (a 34th pack in `HW_Cars` is `base://HW_Cars/car_33`); then entries registered by id
+  (`Port_ContentRegister`: the mod hook, which a project's `ids.lock` will feed in its order;
+  a stub, there is no mod loading yet). Cars are counted from `HW_Cars`' TOC (33 on every
+  release); the game itself never learns a count: tracks are numbers the interface scripts set
+  and test, in families, and items the `HW_Items` packs 0-11 (16-79 are the AI's), so both stay
+  the array's count plus registered entries.
+* **The struct stays.** `HotWheelsGameData` keeps its layout (memory card files, imports) as the
+  view of the retail entries: every write goes to both, and where the game replaces the struct
+  (a new game, a load, the end of an online session) the registry takes it back. Entries past
+  the arrays live only in the registry and the JSON save (§11.4), by id, per save slot: the slot
+  the game saves the live game to gets the registry's values, the others keep theirs as the game
+  moves its slots. Without the entry's id (a mod removed) they stay, marked inactive.
+* **Choke points.** `GameSettings_Get/SetCodeVariable` 0x64-0x66 and the autosave's unlock check;
+  the car and item selects' ranges (the carousel variables that number entries, min 0 max
+  retail-1, are widened to the count as the screen is created; with the retail counts nothing
+  changes); the results screens' car names (variables reading code variable 0xCB); online's
+  car clamp. An extra car or item whose number its archive has no pack for loads the pack it
+  aliases (`DataPack_LoadFile`), its scripts renumbered to its own once loaded.
+* **Tests.** `HWVX_TEST_EXTRA_CARS=2` (cars 33-34 aliasing 3-4) and `HWVX_TEST_EXTRA_ITEMS=2`:
+  shown in the car and item selects, unlocked, selected, raced, and persisted in the JSON save;
+  the title demo is frame-identical on GameCube, PC and PS2 data; `savetest` covers the registry
+  and an extra car's save round trips.
+* **Left:** names and thumbnails come from the interface packs' lists (36 car entries on every
+  release; an index past a list shows its last entry), so a mod's car needs its own entries
+  there; a registered item numbered 16-79 collides with `HW_Items`' own packs; a new track needs
+  its own interface entries and progression level, which is data.
+
 ### 10.6 Events and missions
 
 The game's scripting is already data (trigger types, action functions, event sequences:

@@ -124,6 +124,33 @@ Two changes for the GPU:
   property of the group, not the data.
 * Shadow volumes stay as they are (positions and edges, read on the CPU).
 
+**As built at runtime (step 2a, HWVX-SDL `src/port/gx_mesh.c`):** every source, not only `.xdl`,
+now draws from static buffers built the first time a level is drawn: its groups become one
+triangle list (the PC's strips too, so a group is one draw), and each vertex setup (the use
+flags) gets a buffer of the 32-byte record above (bone as f32). The matrix slot of an unskinned
+level is passed per draw, so one buffer serves every object; a skinned level's is in the record.
+Buffers are dropped when the memory they were built from is freed or rewritten (the display-list
+cache's `Port_InvalidateDisplayLists`). What it taught:
+
+* **Shared vertices change pixels.** With each vertex stored once and indexed, the title demo
+  differs from the per-draw build in a few thousand edge pixels per frame (max channel difference
+  ~70) on Apple GPUs, both renderers, wherever passes meet at equal depth (a car's env-map pass
+  over its body). The vertex data was checked identical (`HWVX_MESHVERIFY`); drawing the same
+  buffers with the triangles' vertices in order (three per triangle, no index reuse) gives
+  byte-identical frames. So the buffers hold vertices in draw order by default and are drawn
+  without indices; `HWVX_MESHSHARED=1` keeps the indexed form. The cost is memory: at most 6.3 MB
+  in the title demo's races (300-400 vertex buffers), against 2.7 MB shared (2.5 MB vertices,
+  0.2 MB indices) for the same stretch of the GameCube demo.
+* **What it saves.** Uploads drop from ~4.5 MB to ~0.15 MB of vertices per frame in the demo
+  races; the CPU time drawing pack geometry from 1.5 to 1.0 ms/frame (OpenGL; what is left is
+  per-draw state) and from 0.57 to 0.27 ms/frame (SDL_GPU on Metal).
+* **Attributes per setup, not per level.** A vertex's values depend on the setup (white without
+  colours, alpha 255 for the RGB setup, zero normals or uvs), so one record per level would need
+  the shaders to select. Up to 8 buffers per level (4 setups, skinned or not); in practice 1-2.
+* **So for `.xdl`:** GPU_VERTEX would store the expanded per-setup streams (or the shared
+  stream plus the index list, if pixel identity across the paths stops mattering), and GPU_INDEX
+  only for the indexed form.
+
 ### 4.3 Textures
 
 * Stored as **BC1** (opaque, DXT1) or **BC3** (alpha, DXT5) with the full mip chain, the format
@@ -186,7 +213,8 @@ are built from.
 * `dvd.c`: `s_formats` gains `PORT_DATA_XDL` (`.xdl`, the cache folder), tried first.
 * `Port_Data.c`: the XDL steps do nothing; the graph is final.
 * `Render_Geometry_.c`: an XDL level draws from the pack's uploaded buffers (base vertex, first
-  index); the CPU path in `gx_mesh.c` remains for any data not in buffers.
+  index); the CPU path in `gx_mesh.c` remains for any data not in buffers. (Since step 2a every
+  level does, built at first draw: §4.2.)
 * `gx_tex.c`: XDL texture formats upload as block data; no decode.
 * Fallback: if a cache file is missing or stale, the port loads the source as today (and can
   compile it in the background).

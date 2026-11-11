@@ -201,26 +201,35 @@ HWVX-SDL (branch `pc-data`) loads `.xpc` packs file by file next to `.xgc` ones:
 * PS2 support needs a `s_formats` entry (`.xps`, `XPS/ENGLISH/`) and its `PORT_DATA_PS2` steps.
 
 The whole PC install runs as `--data`: PC menus (with the PC's key hints), worlds, cars, HUD,
-items and music. Still to do: Bink movies (skipped), a pass over the PC interface screens with the
-port's menu patches, PS2 data, vertex caching for the indexed path.
+items and music.
 
-### Geometry plan: the PC layout as the port's own
+* **Movies:** the PC's are Bink (`FMV_\*.bik`, not in `orig/pc`). The port plays THP only; a
+  movie it can't find is logged and skipped, so a PC folder runs without movies and a mixed folder
+  plays the GameCube's THP files. Decoding Bink would need a third-party decoder.
+* **`bsfile`:** the GameCube's Lid Handler polls this disc file; a PC folder lacks it, the reads
+  fail harmlessly (the PC release has no Lid Handler).
+* **Menus:** PC's main menu has no Multi-Player row and its own "Exit to Desktop" (with a
+  confirm screen; it exits the port cleanly), so the port adds no "Quit Game" there. PC's Game
+  Settings has no Sound Mode row, which the port's Graphics screen was built from; adapting
+  `Port_Menu.c` to the PC screens is in progress.
 
-Pack geometry reaches GX in one place, `Render_DrawGroupPrims` (`Render_Geometry_.c`): a vertex
-setup, the LOD's arrays (`LOD+0xC`), the group's display list (`+0x1C`, size `+0x10`). Everything
-else that touches geometry is layout-independent: LOD choice and culling (stride 0x18, distances,
-bounding boxes), the draw lists (`+0x10` only tested for non-zero), radius from the bounding box.
-Shadow volumes have their own format, the same on both, read by `Render_DrawShadows`. World
-quadrants draw through the same path (`World.c` → `Gfx_DrawGeometry`).
+### Geometry: the PC layout as the port's own
 
-PC geometry is drawn in that layout directly: `Port_Data.c` finds a pack's (and a quadrant pack's)
-geometries through the pointer list and local relocations (header `0x0002`), marks their drawn
+Pack geometry is drawn in one place, `Render_DrawGroupPrims` (`Render_Geometry_.c`), and only in
+the PC's indexed layout. PC geometry is used as it is: `Port_Data.c` finds a pack's (and a
+quadrant pack's) geometries by their headers (`0x0002`, levels at header + 0x40), marks their drawn
 levels `PORT_LAYOUT_INDEXED` in the level's `u16` at 0 (never read by the game), and flags their
-groups' texture relocations so the id lands at `+0x1A`. `Render_DrawGroupPrims` sends marked
-levels to `GX_PortDrawIndexed` (`gx_mesh.c`), which builds vertices the way the display-list
-decoder does. Skinned levels take each vertex's bone from the per-bone count table at `LOD+0x10`
-(bone k is matrix slot k). The next step is converting GameCube geometry to the same layout on
-load (the `gc2pc_geo.py` rules; bone from `pnmtx/3`).
+groups' texture relocations so the id lands at `+0x1A`. GameCube geometry is converted to the same
+layout as its pack loads (`Port_Geometry.c`), skinned geometry included. `GX_PortDrawIndexed`
+(`gx_mesh.c`) builds vertices the way the display-list decoder did; skinned levels take each
+vertex's bone from the per-bone counts at `LOD+0x10` (bone k is matrix slot k). The GameCube's
+display-list path for pack geometry is gone: the converted frames were byte-identical to it.
+Everything else that touches geometry is layout-independent: LOD choice and culling (stride 0x18,
+distances, bounding boxes), the draw lists (`+0x10` only tested for non-zero), radius from the
+bounding box. Shadow volumes keep their own format, read by `Render_DrawShadows`.
+
+The layout and the conversion rules are specified in
+[`../port-format/README.md`](../port-format/README.md).
 
 `VertexColorSeqManager_AddVertices` registers a quadrant's vertex-colour sequences, but nothing in
 the GameCube code reads that list, so it doesn't constrain the vertex layout.

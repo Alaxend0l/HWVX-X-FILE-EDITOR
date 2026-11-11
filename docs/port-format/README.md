@@ -204,6 +204,8 @@ record which release it came from, and the port checks where it matters:
 
 ## 4. Towards a compiler
 
+The target format is drafted in [`../xdl-format/README.md`](../xdl-format/README.md) (`.xdl`).
+
 What a `.x*` compiler would add on top of these rules:
 
 * **Run on the player's machine only.** The output derives from their copy of the game; it is a

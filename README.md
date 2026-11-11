@@ -99,7 +99,8 @@ collects how the PC release differs from the GameCube one, in code and in
 data, with a map of the PC exe. [`docs/port-format/`](docs/port-format/README.md)
 specifies the one layout HWVX-SDL brings every release's packs into (indexed
 geometry, host-order data) and the conversion rules, as groundwork for an
-offline `.x*` compiler.
+offline `.x*` compiler, and [`docs/xdl-format/`](docs/xdl-format/README.md)
+drafts `.xdl`, a pack format made for HWVX-SDL that such a compiler would write.
 
 ## Extracted layout
 

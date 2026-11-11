@@ -154,13 +154,70 @@ cache's `Port_InvalidateDisplayLists`). What it taught:
 ### 4.3 Textures
 
 * Stored as **BC1** (opaque, DXT1) or **BC3** (alpha, DXT5) with the full mip chain, the format
-  the PC release already uses. GameCube CMPR re-tiles to BC1 losslessly; RGBA8/RGB565 encode to
-  BC3/BC1 (or stay raw RGBA8 where quality matters: fonts, UI, **Open**).
+  the PC release already uses. GameCube CMPR re-tiles to BC1 without re-encoding, but BC1 draws
+  most of it differently (below); RGBA8/RGB565 encode to BC3/BC1 (or stay raw RGBA8 where quality
+  matters: fonts, UI, **Open**).
 * Colour look decided at compile time: GameCube colours or the PC's (`pc = sqrt(255 · gc)`).
   Switching rebuilds the cache, or both are stored (**Open**: size vs. instant switching).
 * The texture header in the graph points into GPU_TEXTURE: `{format, width, height, levels,
   offset}`. **Open:** devices without BC support (some mobile GPUs) would need ASTC/ETC2 or a
   decode fallback; the compiler can choose per target.
+
+**As built at runtime (step 2b, HWVX-SDL `src/port/gx_tex.c`):** the renderers take BC1/BC3
+(OpenGL through `EXT_texture_compression_s3tc`, with the PC's opaque DXT1; SDL_GPU where the
+device samples `BC1_RGBA`/`BC3_RGBA`), and a texture goes up as stored where the GPU draws it as
+the release's hardware did; everything else is decoded to RGBA8 at first draw, as before. What it
+taught:
+
+* **The GameCube doesn't draw CMPR as BC1 does.** Its middle colours lie 5/8 and 3/8 of the way
+  between the endpoints (Dolphin's decoder, which follows the hardware), BC1's 2/3 and 1/3 (on
+  Apple GPUs exactly `(43a + 21b + 32) / 64`, measured over every endpoint pair with a Metal
+  probe). In a 3-colour block the GameCube's transparent texel keeps the average colour (rounded
+  towards the first endpoint, as is its opaque middle colour); BC1's is black. The game draws with that colour: the green glow box behind the GO sign at a race start
+  is those texels drawn additively, and the PC and PS2 copies have the box in their own pixels
+  (the same texels leave faint speckles around the HUD's speedometer dial).
+  The port's old decoder had neither (it also expanded 5-bit channels as `v * 255 / 31` instead
+  of repeating the high bits), so the GameCube release lacked the box. The CPU decoder now
+  decodes as the hardware does. A CMPR texture goes up as BC1 only if every colour its blocks use
+  comes out the same both ways, which holds for 5 of the title demo's ~200 textures.
+  `HWVX_TEX_CMPR=close` also takes the textures whose transparent texels are safe: 7.7 MB instead
+  of 19.9 MB, with middle colours up to 12 levels off (in the demo's frames ±1 almost everywhere,
+  at most 31 in 152 pixels of one frame).
+* **Frames against the build before** (title demo, a minute, 60 frames, OpenGL and SDL_GPU alike):
+  the PS2 release byte-identical; the GameCube's 49 of 59 frames differ, mostly by 1 (the
+  5-bit expansion and 5/8 weights; 0.2% of pixels by 16 or more, the GO box and the dial up to
+  255); the PC's 57 of 60 by at most 8 with its default GameCube colours, at most 6 with its own
+  (the decoder's rounding, now the GPU's). The GameCube's default and its forced CPU decode
+  (`HWVX_TEX_DECODE=1`) are byte-identical.
+* **The PC's DXT is BC as it is,** when drawn with the PC's own colours (`pctextures=pc`). Frames
+  are byte-identical whether the textures go up as BC1/BC3 or the CPU decodes them, on both
+  renderers, once the decoder rounds as the GPU does (Apple's weights: colours as above, DXT5
+  alpha in 64ths). Its default GameCube colours square each texel, which a block can't hold, so
+  those are decoded, as are the PS2's raw RGBA8 textures. SDL_GPU has no opaque BC1, so a DXT1
+  texture that uses the transparent index (the PC drew it opaque black) is decoded there.
+* **Textures are shared by content.** A cache miss hashes every byte of the texture (64-bit) and
+  reuses any GPU texture with the same content. Over a minute of the title demo (no frame dumps,
+  so it gets into the races) that saves 21 textures (2.6 MB) on the GameCube, 16 (3.1 MB) on the
+  PC and 23 (3.7 MB) on the PS2.
+* **Memory and time,** resident texture memory at the end of that minute against RGBA8 with one
+  texture per texture object (as before), and the time first draws spent making textures (hash,
+  decode, upload; OpenGL / SDL_GPU on Metal):
+
+  | release, setting | before | after | first draws, before → after |
+  |---|---|---|---|
+  | GameCube | 22.5 MB | 19.9 MB | 15.7 → 14.3 ms / 10.2 → 9.1 ms |
+  | GameCube, `HWVX_TEX_CMPR=close` | 22.5 MB | 7.7 MB | → 10.4 ms / 7.4 ms |
+  | PC, GameCube colours (default) | 23.5 MB | 20.4 MB | 27.3 → 23.7 ms / 20.7 → 18.1 ms |
+  | PC, its own colours | 23.5 MB | 3.3 MB / 4.2 MB | → 5.8 ms / 4.6 ms |
+  | PS2 | 25.1 MB | 21.4 MB | 29.8 → 26.6 ms / 23.1 → 20.6 ms |
+
+  The time is ~0.1 ms a texture either way: decoding was never expensive. Pack loads don't
+  touch textures and take as long as before.
+* **So for `.xdl`, GPU_TEXTURE is not built yet.** What the GPU takes as stored is the source's
+  bytes (DXT) or a byte shuffle of them (CMPR to BC1); everything else goes up as RGBA8, 4-8
+  times the source's size, to save the ~0.1 ms a texture above. GPU_TEXTURE pays off once the
+  compiler picks each texture's encoding and colour look ([`ultimate.md`](ultimate.md)), and can
+  carry the content hash so loading needn't compute it.
 
 ### 4.4 Audio
 
@@ -215,7 +272,9 @@ are built from.
 * `Render_Geometry_.c`: an XDL level draws from the pack's uploaded buffers (base vertex, first
   index); the CPU path in `gx_mesh.c` remains for any data not in buffers. (Since step 2a every
   level does, built at first draw: §4.2.)
-* `gx_tex.c`: XDL texture formats upload as block data; no decode.
+* `gx_tex.c`: XDL texture formats upload as block data; no decode. (Since step 2b every source's
+  BC data uploads as stored where the GPU draws it as the release's hardware did, and textures
+  are shared by content: §4.3.)
 * Fallback: if a cache file is missing or stale, the port loads the source as today (and can
   compile it in the background).
 

@@ -335,8 +335,8 @@ scenes and resources under version control, an import cache beside them.
   sound **WAV/FLAC/OGG**, music **`.mid`** with a JSON instrument bank naming its samples.
 * **One file per object.** A car is a folder (`car.json`, its model, textures, sounds); a world
   a folder of its pieces, triggers and spawn points. Small files diff and merge cleanly.
-* **JSONC** (comments, trailing commas) so tuning values can be annotated. Every file starts with
-  `"$schema"` and `"format_version"`.
+* **JSONC** (comments, trailing commas; decided) so tuning values can be annotated. Every file
+  starts with `"$schema"` and `"format_version"`.
 * **Text tables per language** (`strings/en.json`, `strings/fr.json`), referenced by key; no text
   inline in objects.
 * **Engine-neutral.** A project describes the game (a car, its handling, its parts), not the
@@ -367,8 +367,20 @@ scenes and resources under version control, an import cache beside them.
 
 * Field names come from the BrainCore structs (`maxHealth`, not `+0x5C`). The **JSON Schema for
   each object type is generated from the C struct definitions**, so editor, compiler and port
-  share one source of truth. Fields nobody has decoded yet stay as explicit raw hex in the JSON,
-  so an extract and rebuild round trip is still byte-exact.
+  share one source of truth.
+* **Undecoded bytes** (about 18% of the struct fields in the port's headers are still `pad`/`unk`:
+  463 of 2631; `CarA` 15, `CarAInfo` 12, `Creature` 11, `WorldGameData` 9, `ProjectileInfo` 8,
+  `IfaceObjectDef` 5) are sorted by what the three binaries do with them, not shown as hex:
+  * **read by the game, meaning unknown**: a typed field named by offset (`"unk_0x38": 1.5`), the
+    type taken from how the code loads it (`lfs` → f32, `lbz` → u8). Editable, and a name can
+    replace the offset later without changing the data;
+  * **never read by any release**: left out of the JSON and taken from the base object at build
+    time (an `extends` default), so modders don't see bytes that do nothing;
+  * **whole blocks no tool parses yet**: a binary sidecar beside the JSON, named by structural id;
+    rare, and each one is a to-do for the decoders.
+
+  A round trip stays byte-exact either way; a scan of the binaries' loads per struct offset (the
+  tooling the decomp checks use) does the sorting.
 * Schemas give editors autocomplete and inline errors; a `format_version` bump comes with a
   migration step in the tools.
 

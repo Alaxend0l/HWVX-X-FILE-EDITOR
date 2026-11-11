@@ -184,6 +184,9 @@ its functions match exactly; the remaining `andb`/`orb` where the original has `
 
 ## HWVX-SDL and other releases' packs
 
+The layout the port converts every release into, and the rules, are specified in
+[`../port-format/README.md`](../port-format/README.md).
+
 HWVX-SDL (branch `pc-data`) loads `.xpc` packs file by file next to `.xgc` ones:
 
 * `dvd.c` opens a pack under its GameCube name, then the other releases' (`s_formats`: extension

@@ -96,7 +96,10 @@ GameCube level), and [`docs/beta-audio/`](docs/beta-audio/README.md) for the
 audio port (putting the prototype's briefing dialogue into the shipped
 GameCube audio archives). [`docs/pc-version/`](docs/pc-version/README.md)
 collects how the PC release differs from the GameCube one, in code and in
-data, with a map of the PC exe.
+data, with a map of the PC exe. [`docs/port-format/`](docs/port-format/README.md)
+specifies the one layout HWVX-SDL brings every release's packs into (indexed
+geometry, host-order data) and the conversion rules, as groundwork for an
+offline `.x*` compiler.
 
 ## Extracted layout
 

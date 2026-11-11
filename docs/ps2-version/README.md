@@ -309,7 +309,27 @@ audio in private stream 1 (0xBD) sub-stream 0xA0 with an `SShd` header: type 1 (
 48000 Hz, 2 channels, interleaved blocks (`SSbd` data). Decodable with any MPEG-2 decoder plus a
 small PSS audio demuxer.
 
-## 6. Uncertainties
+## 6. PS2 data in HWVX-SDL
+
+HWVX-SDL (branch `ps2-data`) boots from the PS2 disc's files (`--data` the folder holding
+`XPS/ENGLISH/`, or that folder) and converts each pack as it loads, by these rules:
+`Port_Data.c` (dispatch), `Port_PS2.c` (textures → raw RGBA8888 `PORT_TEX_PC | 1`, SPU-ADPCM SFX
+and `sndb` banks → PCM16), `Port_Geometry.c` (`PortGeometry_ConvertPS2`: VIF strips and skinned
+lists → the indexed layout, group flags, texture relocations at 0x18). One thing §4 doesn't say:
+a standard pack's **header and sound data are padded to 2048-byte sectors** in the file (the
+loader skips the padding), and the header word `num_palettes` is a count, not a pointer. The
+PS2's `GameSettings_GetCodeVariable(0x258)` (platform) returns 1 where the GameCube's returns 2;
+HW_IPack's title shows its "Maximum Justice" subtitle only on 1, so the port returns 1 with PS2 data.
+
+Status: the attract demos of seeds 1–4 run with every geometry converted (skinned levels too) and
+textures, sounds and music decoded (audio zero-crossing rate per audible second 0.02–0.07, as the
+GameCube's); races follow the PC's frame for frame (PS2 and PC have the same world edits, which
+make seeds 2 and 4 drift from the GameCube's). Not done: shadow volumes (kind 3 levels are off:
+their positions are not found), movies (`.pss`). Levels are drawn without culling; `HWVX_PS2CULL=1`
+re-orients strips with `orient` (same strips turned as `ps2_geom.py`) and culls, but a wall of
+`bat2_l9`'s quadrant geometry then goes missing (§7.1).
+
+## 7. Uncertainties
 
 1. **Winding**: 0.36% of triangles stay reversed after `orient` (strips with no shared edges, mixed
    neighbourhoods). The alternative is drawing PS2 geometry without culling, as the PS2 does.

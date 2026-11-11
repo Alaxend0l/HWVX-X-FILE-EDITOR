@@ -1,6 +1,6 @@
 # PC `Hot Wheels.exe`: the 33-car limit and how to lift it
 
-Exe: `orig/pc/Hot Wheels.exe`, sha1 `91af8432d6903371f724c4c2924c4ba51cc9eb73`. PE32, image base 0x400000, DllCharacteristics 0, so it always loads at its preferred base. `.text` VA 0x401000 = file 0x1000, so **file offset = VA - 0x400000** in `.text`.
+Exe: `orig/pc/Hot Wheels.exe`, sha1 `91af8432d6903371f724c4c2924c4ba51cc9eb73` before the patch below (the original exe with a 3-byte no-CD patch at 0x455E90; see `docs/pc-version/README.md`). PE32, image base 0x400000, DllCharacteristics 0, so it always loads at its preferred base. `.text` VA 0x401000 = file 0x1000, so **file offset = VA - 0x400000** in `.text`.
 Tools: `research/pc/disasm.py` (capstone linear dump, output `orig.asm`). Function boundaries were cross-checked against `HWVX-PC-Decomp/config/hotwheels/functions.json`.
 
 ## 1. Places that limit or index by car count

@@ -447,7 +447,7 @@ Converting to `.xdl` imports progress from every save the player has, whichever 
 | the port's own `.sav` files | the game's struct, already in host order | straightforward |
 | GameCube memory card (Dolphin `.gci` files or a raw card image) | read the save file from the card, swap the struct | straightforward; the card file system is documented |
 | PC saves (`My Documents\VelocityX Saved Games\velocityX`) | one file, 8 slots of the GameCube's `HotWheelsGameData` in little-endian after a 0x194-byte header and settings block, checksum verified ([`../pc-version/README.md`](../pc-version/README.md) "Save files") | **decoded** |
-| PS2 memory card (`.ps2` card images, `.psu`/`.max` exports) | the card's file system, then the struct | **research**: the PS2 save layout |
+| PS2 memory card (`.ps2` card images) | the card's file system (`ps2_mcd.py`), then `BASLUS-20412/BASLUS-20412`: the GameCube's save layout in little-endian, checksum verified ([`../ps2-version/README.md`](../ps2-version/README.md) §5.5) | **decoded**; `.psu`/`.max` exports still to add |
 
 Retail ids are the same on every release (§8.1), so each save maps through its release's numbers
 to the same `base://` ids. Several saves **merge as a union** (an unlock in any counts; for counters

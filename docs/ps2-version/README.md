@@ -309,6 +309,22 @@ audio in private stream 1 (0xBD) sub-stream 0xA0 with an `SShd` header: type 1 (
 48000 Hz, 2 channels, interleaved blocks (`SSbd` data). Decodable with any MPEG-2 decoder plus a
 small PSS audio demuxer.
 
+## 5.5 Save files
+
+On the memory card: directory **`BASLUS-20412`** (the US release's product code) holding `icon.sys`,
+`hw.ico` (the card's 3D icon) and the save itself, **`BASLUS-20412`**, 2300 bytes.
+[`scripts/ps2_mcd.py`](scripts/ps2_mcd.py) lists and extracts files from a PCSX2 `.ps2` card image
+(the card file system with ECC, documented in the script).
+
+The save is the **GameCube's layout exactly, in little-endian**: `SAVE_FILE_MAGIC` 4, size 0x8F0,
+the game's checksum (sum of byte + 1 over the 0x8F0 bytes from 0x00C; verified), the 0x150-byte
+`GeneralGameSettings` (volumes, four keyboard bindings in Windows key codes, as the PC has, and the
+slot entries "HW VEL X 1" ...), then 8 × 0xF4 `HotWheelsGameData` slots from 0x15C. The PC's file is
+the same plus 0x38 bytes of settings (`../pc-version/README.md` "Save files").
+
+Cross-checked: a PS2 save and a PC save made after the same progress (Challenge 1) hold the same
+unlocks byte for byte: cars 0–5, items 0–3, tracks 0, 5, 19–22, 29–32, 39, 40.
+
 ## 6. PS2 data in HWVX-SDL
 
 HWVX-SDL (branch `ps2-data`) boots from the PS2 disc's files (`--data` the folder holding

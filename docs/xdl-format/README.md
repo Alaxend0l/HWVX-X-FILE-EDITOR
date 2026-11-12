@@ -884,7 +884,7 @@ also fits §10.7.
 ## Reading the prototype's code
 
 The prototype's executable (`orig/ps2-beta/SLUS_001.00`) is not stripped: its `.symtab` names
-2,081 functions. `tools/mipsdis.py ELF FUNC...` disassembles functions by name (calls, globals
+2,081 functions. `hwvx-decomp mipsdis ELF FUNC...` (HWVX-SDL `tools/decomp`) disassembles functions by name (calls, globals
 and strings named from the symbol table, `lui`/`addiu` pairs folded; `--find`, `--addr`), with no
 toolchain: macOS's objdump has no MIPS target. Everything below was read from it, not inferred
 from the data alone. No prototype function was decompiled into C.
@@ -1018,7 +1018,7 @@ every mode.
 
 ## Tools
 
-* `tools/mipsdis.py`: disassembles the prototype's executable.
+* `hwvx-decomp mipsdis` (HWVX-SDL `tools/decomp`): disassembles the prototype's executable.
 * `tools/proto_pack.py` (an archive's TOC and pack header, `--song` for a pack's song and bank)
   was removed; git history keeps it.
 * `tools/crash_bt.sh`: one run under lldb, the backtrace. It kills only the processes it started

@@ -1,5 +1,7 @@
 # tools/xdlrs: the editor's tools in Rust
 
+The decomp workflow tools are a separate crate, HWVX-SDL `tools/decomp` (`hwvx-decomp`: import, strip-sdk-decls, gen-protos, slotify, fix-casts, fieldify, view-externs, check-ptr-offsets, offsets-to-fields, gen-data, asm-args, mipsdis), not part of xdlrs; steps in HWVX-SDL's README.
+
 ## The core (stage 1)
 
 `tools/xdlrs` is a library crate (and a small CLI) that the editor (tools/browser) links, so the

@@ -103,5 +103,7 @@ only; menus keep their 4:3 layout (letterbox bars and backdrops are stretched or
   The joyride gear icon is covered by the same rule.
 * Not covered: 3D objects drawn in the HUD (a car or thing placed in front of the camera): their
   position is in world units, not pixels. None is known to be misplaced.
+* **Screen flashes** (hits, strafes, lens whiteouts: `Render_ScreenFlash`) cover the whole window,
+  the 4:3 rectangle stretched about its centre by `Port_ViewWiden`, as the letterbox bars are.
 * Tools: `tools/run_test.sh` `WINDOW=WxH`; `tools/aspect_shots.sh` runs the same moment at several
   window sizes and puts the frames side by side.

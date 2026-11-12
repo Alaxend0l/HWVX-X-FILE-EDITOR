@@ -98,7 +98,8 @@ only; menus keep their 4:3 layout (letterbox bars and backdrops are stretched or
   timer): the whole interface moves when all of it lies on one side; ones spread across the middle
   (the pause menu) stay. Found by attaching a debugger to a running game: "Wins" is a two-object text
   interface at x 585-587, beside the count at 628.
-* Not covered yet: 3D objects drawn in the HUD (a car or thing placed in front of the camera, e.g.
-  possibly the joyride gear): their position is in world units, not pixels.
+  The joyride gear icon is covered by the same rule.
+* Not covered: 3D objects drawn in the HUD (a car or thing placed in front of the camera): their
+  position is in world units, not pixels. None is known to be misplaced.
 * Tools: `tools/run_test.sh` `WINDOW=WxH`; `tools/aspect_shots.sh` runs the same moment at several
   window sizes and puts the frames side by side.

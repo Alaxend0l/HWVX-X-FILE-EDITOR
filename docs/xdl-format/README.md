@@ -575,7 +575,9 @@ mod ships only its own audio files, never game data.
   // the front end's music: loop points given here, in the file's sample frames
   "base://HW_music/music_1/song/0": { "file": "music/menu.flac", "loopStart": 441000, "loopEnd": 5292000 },
   // a playlist: each track played through in turn, then from the first again
-  "base://world2/world_0": [ "music/a.mp3", { "file": "music/b.ogg", "volume": 0.8 } ]
+  "base://world2/world_0": [ "music/a.mp3", { "file": "music/b.ogg", "volume": 0.8 } ],
+  // Monument City's joyride: an intro once, then the loop
+  "base://world1/world_0": { "intro": "music/intro.ogg", "file": "music/loop.ogg" }
 }
 ```
 
@@ -583,9 +585,13 @@ mod ships only its own audio files, never game data.
   the ids `pairing.md` gives songs. The archive is the pack file's own name, without its folders
   (`ch1_l2`, not `worlds_\sp_\chal1_\ch1_l2`). Every retail world has one (`world_0`), and so do
   the three front-end music packs (`HW_music/music_1..3`).
-* **A track** is a path in the mod's folder, or an object: `file`; `loopStart` and `loopEnd` (in
-  the file's sample frames); `loop: false` (played once, then silence); `volume` (a gain, 0..4,
-  under the game's music volume).
+* **A track** is a path in the mod's folder, or an object: `file`; `intro` (a file played once
+  before it, flowing straight into it with no gap; not repeated when the track loops or a
+  playlist comes round); `loopStart` and `loopEnd` (in the file's sample frames); `loop: false`
+  (played once, then silence); `volume` (a gain, 0..4, under the game's music volume).
+* **Level.** Recorded tracks are mastered near full scale (about -17 dB RMS), the game's own music
+  plays at about -28 dB RMS, so streams get a fixed -10.5 dB of headroom: `volume` 1 puts a
+  normally mastered track at the game's music level.
 * **Loop points**, first found wins: the manifest; the file's `LOOPSTART` / `LOOPEND` /
   `LOOPLENGTH` tags (Vorbis comments in OGG and FLAC, ID3 `TXXX` in MP3: the convention RPG Maker
   and many game rips use); a sidecar `<file>.loop.txt` with the same `KEY=value` lines (for WAV);

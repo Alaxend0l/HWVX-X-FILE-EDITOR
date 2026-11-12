@@ -28,7 +28,7 @@ differences (three-cornered hat, §1.4).
 | movies, audio | **PS2** (from the header: PCM s16 48 kHz) | THP is 4-bit ADPCM, Bink is lossy DCT; PS2 PCM not decoded here (§4) |
 | movies only one release has | PC `hw_gal`, `hw_mark`; PS2's longer `hwboot` | §4 |
 | race*l1 (multi-player drag worlds) | GameCube | PC lacks the six archives; PS2 has them too |
-| menus | per release | data, not quality; see [`../menus/README.md`](../menus/README.md) |
+| menus, and their textures (HW_IPack, mcp, HW_brief) | per release (the base's own) | data, not quality; see [`../menus/README.md`](../menus/README.md). Until 2026-11-12 the texture rule swapped about 2,000 of them for the PC's and PS2's copies, which changed the GameCube menus' look |
 
 Texture rule as code: `tex_survey.rule()`. Scored against the per-texture hat on the 10,780
 textures all three releases have (PC look): its picks average an own error of **5.00** (RMSE over

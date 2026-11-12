@@ -335,3 +335,10 @@ default behaviour is the same everywhere and stays retail: the attract demos are
 to pc-data on GC, PC and PS2 data, also with `HWVX_HANDLING=2` (demos keep the cars' own
 handling). The option is the port's, on all three releases' Options screens, since the code is
 data-independent and the data it reads is the same on all three.
+
+## Mouse steering (as in the PC release), in HWVX-SDL
+
+
+| what | PC | notes |
+|---|---|---|
+| mouse steering and buttons, always on (no option) | WndProc `0x455A9B`: WM_MOUSEMOVE stores the client x/y (`0x68DDC0/C4`), WM_LBUTTONDOWN/UP and WM_RBUTTONDOWN/UP set bytes `0x68DDCC`/`0x68DDCD`; input poll `0x4568C0` (from `0x456B3B`) | The poll fills controller 1's slots after the DirectInput wheel/joystick (`c_dfDIJoystick2`; the PC opens no DirectInput mouse or keyboard). Left button: slot 9 (A) held, value 0xFF; right: slot 7 (X). Then, once a mouse move has been seen, `GetCursorPos` minus the last position: x > 4 sets the stick X (`keyValue[0x10]`) to 0x65, x < -4 to -0x65; last y minus y (up) likewise for stick Y (`keyValue[0x11]`); otherwise the stick keeps the joystick's value. The cursor goes back to (320, 240) (`SetCursorPos`) every poll, menus included, and is hidden (`ShowCursor(0)` at start, `0x455901`). So the mouse is a digital stick while it moves, with no sensitivity or dead-zone option; with the default controller layout A is gas and X brake/reverse. HWVX-SDL: `Port_Keyboard.c` / `pad.c`, in races only, off by default (launcher Settings, `HWVX_MOUSESTEER`). |

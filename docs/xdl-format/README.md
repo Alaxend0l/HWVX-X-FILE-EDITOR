@@ -560,11 +560,7 @@ a package and runs a race with HWVX_MODS_LOG=1, which shows the sample's 5 car v
 
 #### 8.2.2 Streamed music in mods
 
-Branch `streammusic` of HWVX-SDL. Belongs in docs/xdl-format/README.md §8.2 (as built: a new
-manifest field, after "Tracks"), with the limits table in the asset-limits section (or §8.2,
-"Room past retail limits"). HWVX-SDL/README.md gets the `HWVX_MUSICLOG` switch.
-
-## What it does
+##### What it does
 
 The retail game's music is sequenced: a MIDI-like song and its instrument bank in a world or
 music pack (the prototype's are Impulse Tracker modules), played by the port's MIDI/IT players
@@ -602,7 +598,8 @@ mod ships only its own audio files, never game data.
   `ALLOWED_EXT` and its audio check are the asset-limits branch's). `schemas/Mod.schema.json`
   has the field (`music`, `$defs/musicTrack`).
 
-## How the game plays it
+
+##### How the game plays it
 
 `src/port/musicstream.c`, with small port hunks:
 
@@ -638,7 +635,7 @@ tempo actions (`ActionMusicChange`) on a stream; the songs' reverb send (the str
 mode with it, the only mode with real seeking (through callbacks it would use push mode, where
 each loop's seek decodes the file again from the start).
 
-## Tested
+##### Tested
 
 GameCube data, a test mod in the build folder (`tools/make_test_music.sh` makes the tracks with
 the local ffmpeg: 8 s at 44.1 kHz, 0-2 s 300 Hz, 2-6 s 440 + 554 Hz, 6-8 s 1000 Hz, tags
@@ -682,7 +679,7 @@ the local ffmpeg: 8 s at 44.1 kHz, 0-2 s 300 Hz, 2-6 s 440 + 554 Hz, 6-8 s 1000 
   run); it reaches the stream by the same hook as the world's 0.7 (`SetMusicGVol` → `g_musicVol`
   → `SetMusicVolume`).
 
-## Audio limits
+##### Audio limits
 
 What the mixer and the sound code allow, before and after. Raised only where the retail game
 allocates and sounds exactly as before.
@@ -697,6 +694,19 @@ allocates and sounds exactly as before.
 | music | sequenced only (MIDI songs, IT modules) | + streamed tracks: any rate miniaudio and stb_vorbis read (8-384 kHz), mono or stereo (more channels mixed down), OGG/MP3/FLAC/WAV | Port-only path, off without a mod. |
 | MIDI programs / drums (`g_pProg`, `g_pDrum`) | 128 + 128 | the same | The MIDI program and note ranges: a format limit, not a slot count. |
 | mixer rate | 48 kHz stereo (the DSP's) | the same | The game's sound timing is built on 160-sample frames at 48 kHz (`Audio_Update(0xD05)`). |
+
+#### 8.2.3 Asset limits and sound files in mods
+
+[asset-limits.md](asset-limits.md) lists every measured limit (textures, geometry, heap, ARAM,
+voices, songs), what kind each is and which were raised, and the `"sounds"` member: a mod's own
+WAV, FLAC, Ogg Vorbis or MP3 over a base sound, decoded and resampled as the pack loads.
+
+* **Decoders.** miniaudio 0.11.26 (its dr_wav, dr_flac and dr_mp3) and stb_vorbis 1.23, from
+  HWVX-SDL `src/third_party` (provenance in its README). miniaudio is built decoder-only
+  (`MA_NO_DEVICE_IO` and the rest): it never opens an audio device. Output stays on SDL3 audio
+  and the port's own mixer (ax.c), which keeps retail audio identical.
+* **Packer.** `tools/xdl_mod.py` checks `"sounds"` and `"music"` entries: known members only, a
+  file of the mod with an audio extension, no paths leaving the folder.
 
 ## 9. Mixed builds: one game from several releases
 

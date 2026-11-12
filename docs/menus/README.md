@@ -81,3 +81,24 @@ release's pack. The result, with default settings:
 Drag Race in Multi-Player (no worlds for it on the CD), and PC split screen for three or four
 players (the car select strip is about 160 units tall; two fit the 480-unit screen, four would need
 the panes scaled, and the interface code only offsets children, never scales them).
+
+## Widescreen HUD (HWVX-SDL)
+
+On a screen wider than 4:3 the port keeps the 640x480 layout in the middle and moves the in-game HUD's
+side elements out to the screen's edges (`Port_HudShift`, src/game/InterfaceManager.c). An element's
+side comes from its layout x (its default animation's first key, plus its parent's or anchor's): left
+of 192 moves left by the width of the side area, right of 448 moves right, the middle stays. Gameplay
+only; menus keep their 4:3 layout (letterbox bars and backdrops are stretched or zoomed instead).
+
+* **A player's interfaces** (the HUD): each element by its own side. The target arrow (role 0x1F) is
+  a camera-space point, not a screen position, and is left alone.
+* **Child interfaces** (drawn by a kind-6 placeholder object of the HUD): the placeholder never moves
+  (it sits at x = 0), and the child's elements move together, by the side of the group's middle.
+* **Interfaces of no player** (the battle's target car with its X, a mission's "Wins" beside the
+  timer): the whole interface moves when all of it lies on one side; ones spread across the middle
+  (the pause menu) stay. Found by attaching a debugger to a running game: "Wins" is a two-object text
+  interface at x 585-587, beside the count at 628.
+* Not covered yet: 3D objects drawn in the HUD (a car or thing placed in front of the camera, e.g.
+  possibly the joyride gear): their position is in world units, not pixels.
+* Tools: `tools/run_test.sh` `WINDOW=WxH`; `tools/aspect_shots.sh` runs the same moment at several
+  window sizes and puts the frames side by side.

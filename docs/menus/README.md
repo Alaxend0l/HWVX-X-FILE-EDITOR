@@ -93,7 +93,9 @@ only; menus keep their 4:3 layout (letterbox bars and backdrops are stretched or
 * **A player's interfaces** (the HUD): each element by its own side. The target arrow (role 0x1F) is
   a camera-space point, not a screen position, and is left alone.
 * **Child interfaces** (drawn by a kind-6 placeholder object of the HUD): the placeholder never moves
-  (it sits at x = 0), and the child's elements move together, by the side of the group's middle.
+  (it sits at x = 0, which would read as "left"), and each of the child's elements moves by its own
+  side: the battle's child has "Round" on the left (x 140) and the kill tally on the right (480-587),
+  so moving it as one group would leave it all in the middle.
 * **Interfaces of no player** (the battle's target car with its X, a mission's "Wins" beside the
   timer): the whole interface moves when all of it lies on one side; ones spread across the middle
   (the pause menu) stay. Found by attaching a debugger to a running game: "Wins" is a two-object text

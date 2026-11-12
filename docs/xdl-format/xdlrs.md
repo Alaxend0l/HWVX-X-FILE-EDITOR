@@ -33,7 +33,7 @@ world pack's World record (decode, and the symbolic encoder xdl_graph uses), eve
 parameter list, the samples' triggers with edits, and `xdl_tac.Extract` over xdl_graph's
 extraction of every world pack.
 
-### 10.8.y Stage 2: the level tools in Rust (for §10.6.7 / §10.8)
+## The level tools (stage 2)
 
 `xdlrs::level` (tools/xdl_level.py), `xdlrs::level_pack` (tools/xdl_level_pack.py) and what they
 need of xdl_graph (`xdlrs::graph`: Extractor and Builder), xdl_gltf (`geom`: scan and the decode's
@@ -65,7 +65,6 @@ python3 tools/xdlrs_parity.py --only graph,bsp,level --data GC_DATA
 
 ## The mod check (modcheck)
 
-#### 8.2.4 The mod check in Rust (tools/xdlrs, `modcheck`)
 
 The editor packs mods without Python: `tools/xdlrs/src/modcheck` is `tools/xdl_mod.py`'s
 `index`, `check` and `pack`, with the parts of `xdl_media.py` (archives, pack sections, texture

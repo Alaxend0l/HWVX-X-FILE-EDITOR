@@ -4,8 +4,7 @@ Belongs in: superproject `docs/fields/` (a new `objects.md` next to README.md), 
 pointer from `docs/worlds/README.md` ("the World's records") and from
 `docs/xdl-format/README.md` § source projects (trigger files are a new file form).
 
-Counts are over every retail world pack: GC 57, PC 51, PS2 57 (`tools/world_fields.py`,
-`tools/xdl_tac.py SURVEY_ROOT`). Confidence: **symbols** (a name from a release with debug
+Counts are over every retail world pack: GC 57, PC 51, PS2 57 (`tools/xdl_tac.py SURVEY_ROOT`; the per-field counts came from `tools/world_fields.py`, since removed). Confidence: **symbols** (a name from a release with debug
 symbols or the game's own strings), **code** (named from what the port's code does with it),
 **guessed** (named from the data only; never read by the code).
 
@@ -164,11 +163,10 @@ Pos vectors' `w` is 0xCDCDCDCD (-4.3e8 as f32) in placed records: uninitialised,
 ## Tools
 
 - `tools/xdl_tac.py SURVEY_ROOT`: decode and re-encode every retail parameter list.
-- `tools/world_fields.py [--words] [--struct S]`: per field of the World's records, zeros,
-  distinct values, pointer slots.
-- `tools/typed_bytes.py [--tools DIR] [--by-schema]`: bytes of the world packs by kind
-  (typed, trigger, geometry, texture, raw), for a before/after against another checkout.
-- `tools/tac_survey.py`: the research tool the parameter layouts came from.
+
+The research scripts these tables came from (`world_fields.py`: per-field zeros, distinct values
+and pointer slots; `typed_bytes.py`: bytes by kind; `tac_survey.py` with `tac_layouts.py`: the
+parameter layouts) were removed; git history keeps them.
 
 Typed bytes, GC world packs (177.2 MB; 25.4 MB geometry, 100.0 MB texture images): typed or
 trigger 0.4 MB (0.8 % of the rest) on pc-data, 5.4 MB (10.4 %) on this branch. The largest raw

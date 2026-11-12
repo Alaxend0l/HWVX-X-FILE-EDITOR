@@ -9,8 +9,7 @@ Each limit names the place it comes from and what kind it is:
 * **engine**: the original game code, kept by the port.
 * **port**: a port constant.
 
-"Test" names what hits the limit. Release numbers come from `tools/asset_stats.py` (all three
-releases, counts and extremes only) and from runs with `HWVX_HEAPLOG=1`.
+"Test" names what hits the limit. Release numbers come from `tools/asset_stats.py` (all three releases, counts and extremes only; the script was removed, git history keeps it) and from runs with `HWVX_HEAPLOG=1`.
 
 ## Summary
 
@@ -49,7 +48,7 @@ releases, counts and extremes only) and from runs with `HWVX_HEAPLOG=1`.
   > 0x200`): the slot got no texture object and drew untextured.
 * GX_TexGet refused over 1024 (gx_tex.c:766, :879).
 * No retail texture is over 256 x 256 on any release (11,673 GC, 10,970 PC, 11,759 PS2 textures;
-  `tools/asset_stats.py`).
+  measured with `tools/asset_stats.py`, since removed).
 
 So both checks are now `PORT_MAX_TEX_SIZE` (2048, port.h), and the mip cap is
 `PORT_MAX_TEX_LEVELS` (12). Retail goes through exactly the same code as before: nothing it
@@ -92,7 +91,7 @@ way, the formats are the release's:
   * The PC's index lists use bit 15 to flag strips, so a level holds at most **32,767
     vertices** (`Port_Geometry.c:47`, the encoder's check).
   * The renderers take 16-bit indices (gx_gl.c:643, gx_sdlgpu.c:904).
-  * **Test:** `tools/geom_limits_probe.py` puts a generated sphere in place of a car group,
+  * **Test:** `tools/geom_limits_probe.py` (removed; git history keeps it) put a generated sphere in place of a car group,
     encodes it for each release and decodes it back. All counts are vertices.
 
     | release | encodes | refused |

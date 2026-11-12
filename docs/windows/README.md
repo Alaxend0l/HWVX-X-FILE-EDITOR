@@ -11,8 +11,7 @@ v0.3 on Windows, GameCube data from an NKit image: Task Manager showed
 ## Measured under CrossOver/Wine (macOS, Win10 64-bit bottle `hwvx-win64`)
 
 The GameCube attract demo (deterministic, no input), D3D12 (SDL_GPU's
-default on Windows; CrossOver provides it). `tools/wine_run.sh` runs it,
-`tools/stats_summary.py` sums the log by the minute. "Resident" is the Wine
+default on Windows; CrossOver provides it). `tools/wine_run.sh` runs it; the table's per-minute sums came from `tools/stats_summary.py` (removed; git history keeps it). "Resident" is the Wine
 process's resident size as macOS sees it. Wine's PrivateUsage (Task
 Manager's figure) is useless: it stays at 5121 MB and sometimes wraps.
 
@@ -66,9 +65,9 @@ needs no change.
 - `.nkit.iso` ends in `.iso`, so it is found.
 - `.nkit.gcz` is refused with the convert-to-.iso message, like `.gcz`.
 
-`tools/make_gc_image.py DISC OUT [--nkit]` builds a plain image or one
-with NKit's layout from an extracted disc (sys/ + files/). Its output is
-the player's data: never commit it.
+The test images were built from an extracted disc (sys/ + files/), plain and
+with NKit's layout, by `tools/make_gc_image.py` (removed; git history keeps
+it). Such images are the player's data: never commit them.
 
 Verified on macOS with the GC attract demo, 40 s, deterministic:
 - frames identical from the folder, a plain .iso and an NKit-layout

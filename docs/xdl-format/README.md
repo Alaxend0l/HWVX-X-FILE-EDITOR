@@ -645,8 +645,7 @@ each loop's seek decodes the file again from the start).
 
 GameCube data, a test mod in the build folder (`tools/make_test_music.sh` makes the tracks with
 the local ffmpeg: 8 s at 44.1 kHz, 0-2 s 300 Hz, 2-6 s 440 + 554 Hz, 6-8 s 1000 Hz, tags
-`LOOPSTART=88200 LOOPEND=264600`), `HWVX_AUDIODUMP`, measured with `tools/stream_check.py`
-(each tone's level per window):
+`LOOPSTART=88200 LOOPEND=264600`), `HWVX_AUDIODUMP`, measured with `tools/stream_check.py` (each tone's level per window; the script was removed, git history keeps it):
 
 * **Replaces a world's song** (OGG, Challenge 1-2, `HWVX_START=race:...`): the 300 Hz intro in
   the first 2 s, then the loop for the rest of a 40 s race; 1000 Hz never (max 0.002):
@@ -667,8 +666,7 @@ the local ffmpeg: 8 s at 44.1 kHz, 0-2 s 300 Hz, 2-6 s 440 + 554 Hz, 6-8 s 1000 
 * **Retail unchanged** (no mods): the attract demo is frame-identical to pc-data
   (`tools/demo_compare.sh`, 20 s: 44/44). The mix (`HWVX_AUDIODUMP`, 25 s) is bit-identical to
   pc-data's for the first 6.1 s; after that two runs of the *same* build diverge too (the AX
-  thread's timing against the game), so `tools/audio_compare.py` sets the difference against
-  pc-data run twice: RMS 0.0041 vs 0.0092, spectrum 0.050 vs 0.047 (log10) – within run-to-run
+  thread's timing against the game), so the difference was set against pc-data run twice (`tools/audio_compare.py`, since removed): RMS 0.0041 vs 0.0092, spectrum 0.050 vs 0.047 (log10) – within run-to-run
   jitter. ctest passes, as does `tools/test_xdl_mod.py` with the port's installer.
 * **Damaged files** (`tools/stream_fuzz.sh`: the player itself under AddressSanitizer and
   UBSan, 136 files made from the test tracks: empty, header only, truncated at 5-95%, random
@@ -679,7 +677,7 @@ the local ffmpeg: 8 s at 44.1 kHz, 0-2 s 300 Hz, 2-6 s 440 + 554 Hz, 6-8 s 1000 
   stream current. In the game, a mod whose playlist is a garbage OGG and a FLAC with 1000 bit
   flips logs `can't be decoded` / `nothing more can be decoded` / `no track of the mod's
   decodes ...; the game's own song plays`, and the race's mix matches the run without the mod
-  (`tools/audio_compare.py`: RMS 0.0008). The port's installer copies a package's files after
+  (RMS 0.0008, measured with the since removed `tools/audio_compare.py`). The port's installer copies a package's files after
   checking their sha256s and never decodes them, so a damaged audio file can't hurt it.
 * **Not tested**: the game's music option itself (no way to set it without a save in a scripted
   run); it reaches the stream by the same hook as the world's 0.7 (`SetMusicGVol` → `g_musicVol`
@@ -1021,8 +1019,8 @@ every mode.
 ## Tools
 
 * `tools/mipsdis.py`: disassembles the prototype's executable.
-* `tools/proto_pack.py`: one of its archives, TOC and pack header; `--song` writes a pack's song
-  and bank into a build folder.
+* `tools/proto_pack.py` (an archive's TOC and pack header, `--song` for a pack's song and bank)
+  was removed; git history keeps it.
 * `tools/crash_bt.sh`: one run under lldb, the backtrace. It kills only the processes it started
   (lldb, debugserver, the game) by PID.
 * `tools/proto_world.sh`: a race on a prototype world.
@@ -1739,8 +1737,7 @@ screen, steps, and win and lose sequences. A level ends through its triggers:
   round for player N (GameRules_ForceRoundEnd). Logs: "rules: the round ends, player N wins it" and
   "rules: all rounds complete, player 1 won/lost".
 
-tools/level_summary.py WORLD lists a retail level's records and triggers, one line each, so you
-can see how a mode's levels are made. For example, race1l2's start: trigger 19 locks the four cars
+A retail level's records and triggers, listed one line each (by `tools/level_summary.py`, since removed; git history keeps it), show how a mode's levels are made. For example, race1l2's start: trigger 19 locks the four cars
 and sets variable 6; trigger 26 then unlocks them 4.5 s later and sets variable 6 back to 0 at once.
 
 ## The mode checks (compile and check warnings; the game still runs the level)

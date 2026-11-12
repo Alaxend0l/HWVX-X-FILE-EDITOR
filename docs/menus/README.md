@@ -105,5 +105,6 @@ only; menus keep their 4:3 layout (letterbox bars and backdrops are stretched or
   position is in world units, not pixels. None is known to be misplaced.
 * **Screen flashes** (hits, strafes, lens whiteouts: `Render_ScreenFlash`) cover the whole window,
   the 4:3 rectangle stretched about its centre by `Port_ViewWiden`, as the letterbox bars are.
+* **The scan** of every interface in every pack, `tools/hud_scan.py` and `HWVX_HUDLOG=1`: [hud-scan.md](hud-scan.md).
 * Tools: `tools/run_test.sh` `WINDOW=WxH`; `tools/aspect_shots.sh` runs the same moment at several
   window sizes and puts the frames side by side.

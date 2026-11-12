@@ -714,6 +714,8 @@ WAV, FLAC, Ogg Vorbis or MP3 over a base sound, decoded and resampled as the pac
 * **Packer.** `tools/xdl_mod.py` checks `"sounds"` and `"music"` entries: known members only, a
   file of the mod with an audio extension, no paths leaving the folder.
 
+* **In Rust:** the editor runs the same check through `tools/xdlrs` (`modcheck`), with the same verdicts and byte-identical packages: [xdlrs.md](xdlrs.md).
+
 ## 9. Mixed builds: one game from several releases
 
 A player who owns more than one release can build a cache that takes each asset from the release
@@ -1960,6 +1962,8 @@ applied; one game at a time).
   reloads that pack, so tuning is edit, save, drive.
 
 ### 10.8 As built: packs to projects and back (step 3c)
+
+The editor runs these tools from Rust, without Python: [xdlrs.md](xdlrs.md) (the core, the level tools and the mod check, each checked byte for byte against the Python here).
 
 HWVX-SDL `tools/xdl_graph.py` (whole packs) and `tools/xdl_gltf.py` (geometry), on top of
 `xdl_struct.py` and the generated schemas ([`schemas.md`](schemas.md)). They work on

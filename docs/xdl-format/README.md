@@ -462,8 +462,8 @@ The PS2 prototype differs more (`docs/beta-*`).
 |---|---|
 | `index DATA_DIR... -o INDEX.npz` | hashes the modder's own install; made locally, never shipped |
 | `check MOD_DIR --index INDEX.npz` | what `pack` would refuse |
-| `pack MOD_DIR -o OUT.hwmod --index INDEX.npz` | refuses anything that matches the base data; writes a zip of stored entries with `check.json` |
-| `install OUT.hwmod MODS_DIR` | unpacks a package (the same as `hwvx --install-mod OUT.hwmod`) |
+| `pack MOD_DIR -o OUT.xmod --index INDEX.npz` | refuses anything that matches the base data; writes a zip of stored entries with `check.json` |
+| `install OUT.xmod MODS_DIR` | unpacks a package (the same as `hwvx --install-mod OUT.xmod`) |
 
 `pack` refuses when a mod holds any of these:
 
@@ -1711,7 +1711,7 @@ Triggers are still activated by the refresh at state 5. The demo is frame-identi
 ## Packaging
 
 ```
-python3 tools/xdl_level.py mod PROJECT OUT_MOD_DIR --hwmod OUT.hwmod (--data DATA | --index INDEX.npz)
+python3 tools/xdl_level.py mod PROJECT OUT_MOD_DIR --xmod OUT.xmod (--data DATA | --index INDEX.npz)
 ```
 
 - **The mod folder** holds:
@@ -1725,7 +1725,7 @@ python3 tools/xdl_level.py mod PROJECT OUT_MOD_DIR --hwmod OUT.hwmod (--data DAT
   refuses `"worldPack"`, because a world pack is game data.
 - **The sample.** Checkpoint Run packs to 10 files, 38,588 bytes, with "no game data found".
 
-**In the editor.** The Level tab's **Save as mod…** asks where to save the .hwmod, then runs the same
+**In the editor.** The Level tab's **Save as mod…** asks where to save the .xmod, then runs the same
 command in the background (the scratch's cache holds the index). It reports the packer's line, or
 lists why the level wasn't packed. The level must be saved first.
 
@@ -1753,9 +1753,9 @@ level's own world pack (§10.6.4).
 ## Steps for the user guide
 
 1. In the data browser's Level tab, open the level and save it (⌘S).
-2. Click **Save as mod…** and choose where the `.hwmod` goes. The first time takes about 30 s
+2. Click **Save as mod…** and choose where the `.xmod` goes. The first time takes about 30 s
    while the check for game data indexes your copy of the game.
-3. Give the `.hwmod` file to the other player.
+3. Give the `.xmod` file to the other player.
 4. The player opens the launcher's **Mods** page, clicks **Install a mod...** and picks the file.
    The mod is listed with its name and version.
 5. The level is in its mode's world select, after the retail levels. Pick it and play.

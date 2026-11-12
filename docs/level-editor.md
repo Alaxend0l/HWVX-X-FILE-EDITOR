@@ -417,16 +417,13 @@ Your project's files aren't written.
 Options, above the button:
 
 * **Car**: the car to drive, by number (0, 1, 2...).
+* **Build world pack** (off by default): build a world pack of the level's own from your data and drive that, the older route. Off, the test drive runs your level exactly as players who install it will get it: the level file applied to the world as it loads.
 * **Quick start**: skip the intro screen and the start's delays: the camera, countdown, control
   and the clock all at once, so you're driving immediately.
 * **From here**: start player 1 on the ground under the 3D view's camera (in Fly: under it; in
   Orbit: where it looks), facing the camera's way. Good for trying one part of a long level.
 
-**Timings.** The line under the button says how long the build took ("compiled in 192 ms
-(unchanged)") and the game's PID, then when the level was applied, the race began and you could
-drive ("level applied 786 ms · in the race 894 ms · driving 896 ms"). The first test drive of a
-world takes a few seconds longer (the world is extracted and its pack built once); after an
-edit, about 2 s; unchanged, under a second.
+**Timings.** The line under the button says how long the build took ("compiled in 55 ms (unchanged)"), which route it used ("as shared: the level file applied at load", or "its own world pack, built") and the game's PID. Then it says when the level was applied, the race began and you could drive ("level applied 444 ms · in the race 530 ms · driving 561 ms"). As shared, a test drive starts in about half a second. With **Build world pack** ticked, the first test drive of a world takes a few seconds longer (the world is extracted and its pack built once); after an edit about 2 s; unchanged, under a second.
 
 **Errors** stop the test drive and list under the button by file and place, for example
 `triggers/cp1.jsonc param: level://volumes/cp9: the level has nothing of that name`. Fix them and
@@ -470,14 +467,14 @@ editor and open the folder again. From the command line,
 
 ## 9. Sharing your level (packaging)
 
-A level is shared as an installable mod, a `.hwmod` file. It holds your level only: its compiled
+A level is shared as an installable mod, a `.xmod` file. It holds your level only: its compiled
 level file and your project's sources. It never holds game data, and saving refuses if it would.
 
 1. In the Level tab, open the level and save it (⌘S / Ctrl+S).
-2. Click **Save as mod…** and choose where the `.hwmod` goes. The first time takes about 30 s
+2. Click **Save as mod…** and choose where the `.xmod` goes. The first time takes about 30 s
    while it checks your copy of the game, so that nothing from the game ends up in the mod; that
    check is cached afterwards.
-3. Give the `.hwmod` file to the other player.
+3. Give the `.xmod` file to the other player.
 4. The player opens the launcher's **Mods** page, clicks **Install a mod...** and picks the file.
    It is listed with its name and version.
 5. The level appears at the end of its mode's world select. Pick it and play.
@@ -486,9 +483,7 @@ Nothing is built on the player's machine. When the level's world loads, the game
 level to the player's own copy of that world: it changes values, swaps triggers, and adds starts,
 items, effect points and objectives in memory. All of it is undone when the world unloads.
 
-To drive your level exactly as players will get it, tick **As shared** before pressing F5. A
-normal test drive builds a world pack for the level instead (faster to iterate on and the same
-result in most cases), so use As shared for a final check before you share.
+A test drive (F5) already runs your level exactly as players will get it: the level file applied as the world loads. Ticking **Build world pack** in the Level tab tests through a world pack built from your data instead. The result is the same in most cases; the default is what you share.
 
 ---
 
@@ -503,7 +498,7 @@ result in most cases), so use As shared for a final check before you share.
 * **The axis gizmo can't be dragged.** Move with Ctrl/Cmd + drag over the ground, or type the
   numbers.
 * **The live preview** shows your volumes, timers, variables, texts and patches; your own starts,
-  items, effect points and objectives are drawn as marks but only take effect in a test drive.
+  items, effect points and objectives are drawn as marks but only take effect in a test drive (and in the shared level).
 * **Base volumes**: only the sphere airboxes are listed and movable (box volumes aren't).
 * **Patches** change number fields only.
 * **Trigger limits**: the game allows only so many active triggers of each type (your level's

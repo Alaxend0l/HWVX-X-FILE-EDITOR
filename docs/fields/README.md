@@ -476,3 +476,7 @@ changes.
 | 0x64 | `numStates` | u32 | certain | yes | yes | yes |  |
 | 0x68 | `states` | ptr | certain | yes | yes | yes |  |
 
+
+## World objects and triggers
+
+See [objects.md](objects.md): every trigger kind, keyword and world record as decoded (confidence and counts per field).

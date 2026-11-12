@@ -358,3 +358,7 @@ hints (region outlines, hub-only meshes).
   ~88% of geometries, so generated worlds will not stream exactly like retail ones.
 * Not covered here: the volume grid (`VolumeHolder`), nav data, paths, and the per-platform
   geometry encodings (those are `xdl_gltf.py`'s).
+
+## Objects in a world
+
+Triggers and world records (TileCar, TilePath, WorldQuad, volumes, teleporters, variables, timers, objectives) are decoded in [../fields/objects.md](../fields/objects.md).

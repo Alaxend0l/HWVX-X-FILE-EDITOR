@@ -168,6 +168,16 @@ On top of these the editor draws your level: the selection in yellow with a red/
 gizmo, your own volumes in magenta, your own starts as cyan boxes, and starts with a problem in
 orange.
 
+### View switches: clipping, all quadrants, fog
+
+The Worlds tab's **View** row has three checkboxes for the 3D view only (the game and test drives are unaffected):
+
+* **Geometry clipping** off: nothing disappears with distance (no far plane, no distance or off-screen culling; far geometry stays on its last level of detail).
+* **Load all quadrants**: the whole world is drawn, not just the part around the camera.
+* **Fog** off: no distance fog (the sky keeps its haze).
+
+From the command line: `hwvx-browser --world NAME --view noclip,allquads,nofog`.
+
 ### Picking
 
 Click in the 3D view to select what's under the pointer: the base world's starts, airbox

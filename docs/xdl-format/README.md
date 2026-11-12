@@ -488,6 +488,7 @@ The PS2 prototype differs more (`docs/beta-*`).
 * The launcher's Mods page is still a placeholder; it has a hook, `Port_LauncherMods`.
 * Online play doesn't check `Port_ModsActive` yet.
 * Items' patches assume the item's pack number (`Port_ContentItemPack`); only cars were tested.
+* Tracks (`"tracks"`: `extends` base://mcp/track/N, `name`, `thumbnail`, `unlocked`, `world`) go into ids.lock like cars; the sample's shows in the Challenge select, unlocked.
 
 ## 9. Mixed builds: one game from several releases
 

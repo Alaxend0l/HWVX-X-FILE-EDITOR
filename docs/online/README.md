@@ -23,7 +23,19 @@ players past 4 wait in the lobby. The retail game has 4 player ports; online:
   order, plus names) in MSG_HELLO on joining. A client whose mods differ from the host's
   leaves with "Mods differ. Host: ... Here: ..."; the host leaves it out of games and shows
   "Player N has other mods" in the lobby. No mods on both sides: they match.
-- A registered track goes in MSG_SETUP by id, with the level of the track it is made from
-  for a machine without it (levels past a script's own are numbered by each ids.lock).
+- The PS2 prototype counts as a mod: with an import mode other than `off`, the mode and the
+  prototype's identity (FNV-1a of its files' paths and sizes, `Port_ProtoIdentity`, proto.c) go
+  into the fingerprint, and the summary reads "..., PS2 prototype (<mode>, <6 hex>)". A
+  different mode or prototype is refused like other mods ("Mods or prototype differ"). It
+  hashes names and sizes, not contents.
+- A registered track goes in MSG_SETUP by id (levels past a script's own are numbered by each
+  ids.lock). A client without that track leaves the session ("The host's track isn't here:
+  <id>") rather than loading the level it was made from.
+- Players 5-8 that start at a free spawn of ports 1-4 keep their own port
+  (`Port_OnlineTilePort`). In Drag Race the script renumbers players by lane
+  (ActionSetPlayerOrder), so a round goes to the lane's number, as on retail.
+- Test: `tools/online8_test.sh BUILD DATA OUT MODE SECONDS PLAYERS`; `GAP=P` leaves port P
+  empty (its bot joins and leaves in the lobby, held open with HWVX_ONLINE_TEST `lobby=SECONDS`),
+  and every other port must sync at the host.
 - The round time travels as read (ms): the menus set it in 5-minute steps, and setting the
   read value again multiplied it (a bug before 8 players).

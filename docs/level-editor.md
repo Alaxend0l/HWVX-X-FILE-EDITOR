@@ -231,8 +231,9 @@ original. Patched records say "(patched)" in the lists, and **Level settings** c
 ### Texts
 
 A Text is one or more paragraphs (at most 255 characters each; the inspector counts them).
-**+ paragraph** adds one. Triggers show texts with `print_debug_string`, for example as the
-objective line of the pause, win and lose screens.
+**+ paragraph** adds one. Triggers show texts with `print_debug_string` (what 4: the message line
+under the challenge and joyride briefing and on the win and lose screens). Keep them short, and print a
+blank text as the level starts, as retail does: the briefing's own text is an objective's.
 
 ### Triggers
 

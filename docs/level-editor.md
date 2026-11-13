@@ -32,47 +32,48 @@ player's own copy of the world, and the game applies it when the level loads.
 * **Your own copy of the game.** The editor reads the game's data from your disc's files, for
   example the GameCube disc's extracted `files/` folder (HWVX-SDL's README, "Game data", says how
   to get it). No game data comes with the editor, and none goes into your levels.
-* **HWVX-SDL built from source**: CMake, Ninja, a C compiler and SDL3 (see HWVX-SDL's README).
-* **Rust** (cargo) to build the browser.
-* **Python 3** (the editor runs `tools/xdl_level.py` to check and build levels). If `python3`
-  isn't the one you want, set `HWVX_PYTHON` to its path.
+* **HWVX Editor** from the [releases page](https://github.com/Alaxend0l/HWVX-SDL/releases) (tags
+  `editor-v*`). It includes the game, so nothing else is needed:
+  * **Windows:** unzip `HWVX-Editor-VER-windows-x86_64.zip` anywhere and run `hwvx-browser.exe`.
+  * **macOS:** open the `.dmg` and drag **HWVX Editor** to Applications.
+  * **Linux:** make the `.AppImage` executable and run it.
 
-### Building
-
-From the HWVX-SDL checkout:
-
-```sh
-cmake -S . -B build -G Ninja
-ninja -C build
-cargo build --release --manifest-path tools/browser/Cargo.toml
-```
-
-This gives you the game (`build/hwvx`) and the browser
-(`tools/browser/target/release/hwvx-browser`). The browser finds the game by looking for
-`build/hwvx` in the folders above itself, so keep both in the same checkout (or pass
-`--game PATH`).
+The game's launcher has an **Editor** button that starts the editor when it is installed beside
+the game.
 
 ### Running it
 
+Start the editor and pick your game's folder, or from a terminal (macOS: the program is in
+`HWVX Editor.app/Contents/MacOS/`):
+
 ```sh
-tools/browser/target/release/hwvx-browser --data /path/to/your/game/files
+hwvx-browser --data /path/to/your/game/files
 ```
 
 To open one of the sample levels at once, and its world with it:
 
 ```sh
-tools/browser/target/release/hwvx-browser --data /path/to/files \
-    --level tools/level-samples/checkpoint-run --world ch1_l2
+hwvx-browser --data /path/to/files --level level-samples/checkpoint-run --world ch1_l2
 ```
+
+(The samples come with the editor: `level-samples/` beside the program, or
+`HWVX Editor.app/Contents/Resources/level-samples` on macOS. Copy one before changing it.)
 
 The browser starts the game in a hidden "viewer" mode and shows its picture in the middle of
 its window. The first time you open a level in a world, the editor extracts that world once into
 its scratch folder (a few seconds; "checked in ... ms" by **Live preview** shows when it's done).
 After that, checks take well under a second.
 
+### Building from source (developers)
+
+From the HWVX-SDL checkout: `cmake -S . -B build -G Ninja && ninja -C build`, then
+`cargo build --release --manifest-path tools/browser/Cargo.toml`. In a checkout the browser finds
+the game, `schemas/` and `hwvx-x` by looking in the folders above itself (`--game PATH` to pick a
+game); packaging is in HWVX-SDL's `packaging/README.md` ("The editor"). No Python is needed.
+
 ### The samples
 
-`tools/level-samples/` has one finished level per mode. Open them to see how a level is made,
+`level-samples/` (in a checkout: `tools/level-samples/`) has one finished level per mode. Open them to see how a level is made,
 or copy one as a starting point.
 
 | sample | mode | world | won by | lost by |
@@ -461,8 +462,8 @@ can't win.
 
 The level is plain text, so you can also edit `level.jsonc` and the trigger files in a text
 editor and open the folder again. From the command line,
-`python3 tools/xdl_level.py check LEVEL_FOLDER` runs the same checks (add
-`--data /path/to/files` to also check the links into the world).
+`hwvx-browser --level LEVEL_FOLDER --check --data /path/to/files` runs the same checks without a
+window (`--drive SECS` test-drives it, `--save-mod OUT` packs it).
 
 ---
 

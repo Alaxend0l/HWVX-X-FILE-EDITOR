@@ -105,6 +105,13 @@ only; menus keep their 4:3 layout (letterbox bars and backdrops are stretched or
   position is in world units, not pixels. None is known to be misplaced.
 * **Screen flashes** (hits, strafes, lens whiteouts: `Render_ScreenFlash`) cover the whole window,
   the 4:3 rectangle stretched about its centre by `Port_ViewWiden`, as the letterbox bars are.
+* **Split screen** (0.4.1 E3): the views fill the window, each projection widened as one view's is
+  (`MapViewport` in gx_draw.c, `Port_ViewWiden`), and each player's HUD is widened per view and
+  centred in its own view: its middle follows the view's centre, its sides go to the view's edges
+  (`Port_HudPane`/`Port_HudShift`; split thresholds 256/384 of 640, so the battle's speed stays by
+  its radar). The original game's 2- and 4-player HUDs sit 10 units toward the screen's middle lines
+  (offsets 10/310 and 10/230 for views at 0/320 and 0/240); that offset is removed on purpose,
+  everywhere, 4:3 included. Test with `HWVX_START=race:mode=mpbattle,players=N`.
 * **The scan** of every interface in every pack, `tools/hud_scan.py` and `HWVX_HUDLOG=1`: [hud-scan.md](hud-scan.md).
 * Tools: `tools/run_test.sh` `WINDOW=WxH`; `tools/aspect_shots.sh` runs the same moment at several
   window sizes and puts the frames side by side.

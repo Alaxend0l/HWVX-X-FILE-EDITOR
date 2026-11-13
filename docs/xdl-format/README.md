@@ -358,6 +358,28 @@ The base screens still come from the player's copy: the port cannot ship one rel
 the owner of another. A player who owns both can already pick one release's `HW_IPack`, since
 the port mixes releases file by file.
 
+**Button prompts** (HWVX-SDL 0.4.1 A) are not a menu patch: interfaces keep the release's button
+atlas, and the port swaps its cells at draw time (`Port_Prompts.c`), so nothing in a compiled
+pack changes. Each release has one 128×128 atlas of 4×4 cells of 32 px (GC A/B/X, the PC's
+keycaps, the PS2's glyphs), copied into HW_IPack (`interface_3:24` and others) and every world
+pack (GC RGBA8 or CMPR, PC DXT5, PS2 PSMT8); the port recognises it by a perceptual hash at load,
+so re-encoded copies in mixed builds match too. Every interface of every release shows only three
+cells (positions as the UV keys give them; the textures are stored bottom-up):
+
+| cell | GC | PC | PS2 | meaning |
+|---|---|---|---|---|
+| (32,64) | A | Enter | cross | confirm |
+| (32,96) | B | Esc | triangle | back |
+| (0,64) | X | C | circle | details |
+
+They appear in HW_IPack's memory card screens, controller page, main-menu children and confirm
+screens, and in every world pack's pause menu, confirmations and in-level briefings ("(A)
+CONTINUE": an A-cell image with a "Continue" text anchored at it); no car pack (HUD) or HW_brief
+interface shows one. Most are an image plus a two-key texture animation of the same cell, both
+naming the atlas. The pad pictures (GC; PS2 with an overlay and key animations) are separate
+textures and are left as they are; the PC's controller page is its keyboard screen.
+`xdlrs prompts inventory GC PC PS2 [--all] [--png DIR]` lists every copy and user.
+
 ## 7. The compiler
 
 **Where it runs: in the port.** HWVX-SDL already turns every release into the port's layout as

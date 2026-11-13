@@ -195,6 +195,9 @@ Majority rule: GC and PS2 agree, so the port keeps their law by default. `--pc-p
 music), with the centre kept at the GameCube level (near speaker 0x5A82), so centred sounds and
 the attract demo are unchanged; a sound at the side is 3 dB lower in total power, as on the PC.
 
+HWVX-SDL's launcher has the choice on its Settings page: "Stereo: GameCube/PS2 | PC (wider)", saved as
+`stereo=gc|pc` in graphics.cfg (default gc); `--pc-pan` and `HWVX_PC_PAN=1|0` override it for one run.
+
 ### The same on both
 
 The trigger and action systems and their table sizes; thing pools

@@ -32,7 +32,7 @@ player's own copy of the world, and the game applies it when the level loads.
 * **Your own copy of the game.** The editor reads the game's data from your disc's files, for
   example the GameCube disc's extracted `files/` folder (HWVX-SDL's README, "Game data", says how
   to get it). No game data comes with the editor, and none goes into your levels.
-* **HWVX Editor** from the [releases page](https://github.com/Alaxend0l/HWVX-SDL/releases) (tags
+* **HWVX Editor** from the [releases page](https://github.com/Alaxend0l/HWVX-X-FILE-EDITOR/releases) (tags
   `editor-v*`). It includes the game, so nothing else is needed:
   * **Windows:** unzip `HWVX-Editor-VER-windows-x86_64.zip` anywhere and run `hwvx-browser.exe`.
   * **macOS:** open the `.dmg` and drag **HWVX Editor** to Applications.

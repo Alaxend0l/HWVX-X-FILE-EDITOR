@@ -1,0 +1,146 @@
+# HWVX Editor's packages (HWVX-SDL/packaging/README.md "The editor"):
+# - on an editor tag (editor-v0.1.0...): built and published as a GitHub
+#   Release of this repository;
+# - by hand (workflow_dispatch): as workflow artifacts only.
+# HWVX-SDL is checked out at the commit this repository pins (the HWVX-SDL
+# submodule) and each job runs its packaging/editor/ script; hwvx-x is built
+# from this repository's own crate (HWVX_X_CRATE).
+name: Editor
+
+on:
+  push:
+    tags: ['editor-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: HWVX-SDL
+
+env:
+  # editor-v0.1.0 -> 0.1.0; by hand: dev-<commit>
+  HWVX_EDITOR_VERSION: ${{ startsWith(github.ref, 'refs/tags/editor-v') && github.ref_name || format('dev-{0}', github.sha) }}
+
+jobs:
+  windows:
+    name: Windows x86_64 (.zip)
+    runs-on: ubuntu-24.04   # cross-compiled with MinGW-w64 GCC
+    steps:
+      - uses: actions/checkout@v4      # this repository: hwvx-x's crate
+      - name: The HWVX-SDL commit this repository pins
+        working-directory: .
+        run: echo "SDL_SHA=$(git ls-tree HEAD HWVX-SDL | awk '{print $3}')" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: Alaxend0l/HWVX-SDL
+          ref: ${{ env.SDL_SHA }}
+          path: HWVX-SDL
+          fetch-depth: 0     # the game's version inside: git describe (v* tags)
+      - run: echo "HWVX_X_CRATE=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 cmake ninja-build zip
+      - run: rustup target add x86_64-pc-windows-gnu
+      - uses: actions/cache@v4
+        with:
+          path: HWVX-SDL/build-pkg/windows/sdl-prefix
+          key: sdl-windows-${{ hashFiles('HWVX-SDL/packaging/SDL_VERSION', 'HWVX-SDL/packaging/build-sdl3.sh', 'HWVX-SDL/cmake/mingw-w64-x86_64.cmake') }}
+      - run: packaging/editor/windows/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: editor-windows-x86_64
+          path: HWVX-SDL/dist/*
+
+  macos:
+    name: macOS universal (.dmg)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4      # this repository: hwvx-x's crate
+      - name: The HWVX-SDL commit this repository pins
+        working-directory: .
+        run: echo "SDL_SHA=$(git ls-tree HEAD HWVX-SDL | awk '{print $3}')" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: Alaxend0l/HWVX-SDL
+          ref: ${{ env.SDL_SHA }}
+          path: HWVX-SDL
+          fetch-depth: 0     # the game's version inside: git describe (v* tags)
+      - run: echo "HWVX_X_CRATE=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+      - run: brew install ninja librsvg
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: actions/cache@v4
+        with:
+          path: HWVX-SDL/build-pkg/macos/sdl-prefix
+          key: sdl-macos-${{ hashFiles('HWVX-SDL/packaging/SDL_VERSION', 'HWVX-SDL/packaging/build-sdl3.sh') }}
+      - run: packaging/editor/macos/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: editor-macos-universal
+          path: HWVX-SDL/dist/*
+
+  linux:
+    name: Linux ${{ matrix.arch }} (AppImage)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04       # old glibc: runs on more distributions
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4      # this repository: hwvx-x's crate
+      - name: The HWVX-SDL commit this repository pins
+        working-directory: .
+        run: echo "SDL_SHA=$(git ls-tree HEAD HWVX-SDL | awk '{print $3}')" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: Alaxend0l/HWVX-SDL
+          ref: ${{ env.SDL_SHA }}
+          path: HWVX-SDL
+          fetch-depth: 0     # the game's version inside: git describe (v* tags)
+      - run: echo "HWVX_X_CRATE=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+      - name: SDL's build dependencies (as build.yml's linux job)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config curl file \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libaudio-dev libjack-dev libsndio-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
+            libdbus-1-dev libibus-1.0-dev libudev-dev libusb-1.0-0-dev \
+            libwayland-dev wayland-protocols libdecor-0-dev
+      - uses: actions/cache@v4
+        with:
+          path: HWVX-SDL/build-pkg/linux-${{ matrix.arch }}/sdl-prefix
+          key: sdl-linux-${{ matrix.arch }}-${{ hashFiles('HWVX-SDL/packaging/SDL_VERSION', 'HWVX-SDL/packaging/build-sdl3.sh') }}
+      - run: packaging/editor/linux/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: editor-linux-${{ matrix.arch }}
+          path: HWVX-SDL/dist/*.AppImage
+
+  release:
+    name: GitHub Release (the editor's)
+    if: startsWith(github.ref, 'refs/tags/editor-v')
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - run: echo "VER=${GITHUB_REF_NAME#editor-v}" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: editor-*
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: HWVX Editor ${{ env.VER }}
+          files: artifacts/*
+          generate_release_notes: true
+          make_latest: true    # the editor is this repository's release

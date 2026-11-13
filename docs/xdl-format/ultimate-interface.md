@@ -33,8 +33,7 @@ docs/menus/README.md (a note that a mixed build's menus and HUD are one release'
   HW_Cars share_2's gauges, the worlds' interfaces HW_share share_1's fonts, frames and effects
   (23 textures). A share pack is mixed before the packs that refer to it load, so `--mix-build`
   runs a first pass that loads every pack uncached and only records these references
-  (Port_IfaceTexturesAll), then builds. Playing a mixed game that was never built (packs mix as
-  they first load) has no such list: those 23 follow the "best" rule there.
+  (Port_IfaceTexturesAll), then builds. Playing a mixed game that was never built gives the same interface textures as a build (see "Played unbuilt" below).
 * Pick: the set's paired copy; else, for a texture the pairing table leaves single because the
   releases drew it differently, the set's single texture of the same size and shape (alpha within
   24 levels, clearly closest, else the one at the same index): the GameCube flame logo <-> the
@@ -161,3 +160,34 @@ PS2 games are unchanged (nothing of this runs without a recipe).
 Checked at 1280x720 against the plain PS2 (silver) and the plain GameCube (yellow), title frames
 600-1200: identical but for the press-start row, which reads PRESS START/ENTER where they read
 PRESS START BUTTON and PRESS START, at the same height and centre.
+
+## Played unbuilt
+
+* The builder's first pass (the share packs' textures other packs' interfaces show: HW_Cars
+  share_2's gauges, HW_share share_1's fonts and frames, the HUD arrow's geometry slot; 24 entries
+  on retail) is kept in the cache folder as `uirefs.txt` ("stamp=", "xdl=" as built.cfg, "count=",
+  then `ref ARCHIVE PACKID INDEX WHAT` lines). `--mix-build` writes it with the build.
+* `--mix` (and the launcher's Play of the mixed game) reads it before the first pack loads. When
+  it is missing or of another stamp / cache version, the game runs `hwvx --mix-scan RECIPE`, the
+  first pass alone, in a process of its own (the pass loads every pack and leaves share packs
+  loaded, which the game must not keep), waits for it (~0.7-0.8 s once) and reads the list. If that
+  fails the game plays on with the old "best" rule for those textures (logged).
+* Why not require a build: the scan costs under a second, once per recipe/release/cache change,
+  and runs the builder's own code, so the list is the build's exactly; requiring a build would drop
+  the "playing it mixes each pack as it first loads" option for a check this cheap.
+* Caches from before: when the list had to be made and the folder has no built.cfg of this build,
+  the share archives the list names (hw_cars.xdl, hw_share.xdl) are deleted and mix again as they
+  load (an unbuilt game's cache had them mixed without the list, under the same stamp).
+* `HWVX_MIX_MANIFEST=1`: a game played unbuilt appends what it mixes to
+  `<cache>/manifest-play.jsonl` (the build's manifest format), for `xdlrs mix ui-check` and for
+  comparing with a build's manifest.jsonl.
+* sources.cfg `interface=`: one reading for the launcher and mix.c (Port_MixInterfaceSetting):
+  spaces and case ignored, "ps2" silver, anything else yellow (mix.c logs a value that is neither).
+
+Checked (retail GC+PC+PS2, base GameCube, ch1_l3 challenge race): played unbuilt, every line of
+manifest-play.jsonl is in the build's manifest.jsonl, both sets (silver 243 lines, yellow too);
+ui-check ok. With an empty list (the old behaviour) 14 share textures differ from the build
+(HW_Cars share_2 5,6,8,9,10,11,13, HW_share share_1 6..10,49,67 from the PC/PS2 by "best"): the
+HUD's gauge frames gold and the target arrow yellow in the silver set; with the list all silver.
+An old unbuilt cache is repaired on the next start (hw_cars.xdl, hw_share.xdl mixed again; then
+identical to the build).

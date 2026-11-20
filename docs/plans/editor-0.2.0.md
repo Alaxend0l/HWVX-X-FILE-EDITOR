@@ -7,11 +7,11 @@ browser), the gizmo drag and patches beyond numbers, the level limits lifted, th
 
 ## Blockers
 
-1. **FFmpeg packaging** (branch `ffmpeg-packaging` in HWVX-SDL and the superproject, worktrees
-   `~/Develop/wt-ffmpeg`, `~/Develop/wt-ffmpeg-x`): push the branch to run CI on every platform (it
-   also carries the Flatpak x86_64 fix, `flatpak-ci-fix`), merge when green. The editor packages
-   need it for Bink and PS2 movies. The Windows editor build fix (`ec1d98c`, xdlrs `shaders.rs`) is
-   untested on Windows: MinGW is now installed here (`cargo check --target x86_64-pc-windows-gnu`).
+1. ~~FFmpeg packaging~~: **done** (merged 2026-11-20; CI run 44720015219 green on every platform,
+   after `tar --no-same-owner` for the Flatpak sandbox). The Flatpak overlayfs fix ran on Azure
+   that time: proven once an x86_64 Flatpak job lands on AWS (its step prints the mount). The
+   Windows editor build fix (`ec1d98c`) still wants a check: `cargo check --target
+   x86_64-pc-windows-gnu` in tools/browser (MinGW is installed), or the editor CI.
 2. **Two editor tests failing since before v0.4.1**: `tools/browser/tests/protocol.rs:66` (a web
    POST to the viewer should get no reply) and `tests/world.rs:85` (the world drawn: too few
    colours). Understand before release.

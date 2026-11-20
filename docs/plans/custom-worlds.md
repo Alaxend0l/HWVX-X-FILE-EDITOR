@@ -315,6 +315,55 @@ the pillars' sides and drives on; no run went below a surface. The ramp demo dri
 The collision pack doubled (the capped and the solid squares); the port has no limit, a console
 budget would need fewer solid squares.
 
+**Phantom hits, third pass (branch `worlds-edges`).** Rescaled to a third (8.5 → 2.8333 units
+a metre) the same level drove badly: the car's nose lifted on smooth ground. The point checks
+read clean; the game's own ray did not:
+
+* **Cause: near-coplanar polygons kept as nodes of their own.** The tree builder (the exporter's
+  rule) sent a polygon in, or a float hair off, the splitter's plane to the front as a node of
+  its own. That node's back leaf is a float-thin solid slab behind the plane, everywhere in the
+  cell. `RayHitsBSP2` splits a ray at each plane it crosses and hands the piece ending exactly
+  on that plane down the tree; landing a hair behind the twin plane, it reports a hit: a face in
+  open air, anywhere along that plane. Gentle surfaces made of many small triangles put many
+  near-equal planes in one cell (a smaller model scale, or a finer mesh, packs more into a
+  cell): on the rescaled level 44% of all tree nodes repeated an ancestor's plane, at the old
+  scale 20%. Fix (`build_tree`): a polygon facing the splitter's way within 0.26° and 0.01 units
+  of its plane is dropped (it says nothing the splitter does not). One a hair off facing the
+  other way stays (the other side of a thin sheet).
+* Found on the way, all general: a mesh that runs through itself (a ledge's drop face going on
+  down inside the cliff beyond it, one welded piece) left faces buried in its own solid, through
+  which a box corner sunk into the slope left the solid, pushed further in (the car drove into a
+  cliff): the union now clips each piece against its own solid too. Skirts only hang where it
+  is open past the edge (a T-junction is no open edge). Crease edges whose faces are buried
+  are dropped (20% of them). Each cell tries more polygon orders (smallest first, three fixed
+  shuffles) scored also half a unit either side of each polygon. Deck pieces in a fixed order.
+* Game side (C, custom worlds only, `Port_WorldActive()`): when a ray starts inside the solid,
+  `RayHitsBSP2` reports the plane of the last node, often a cell wall closing the solid far off;
+  it now reports the nearest plane the point is behind (the face it sank through).
+* **New checks** (`world build` prints them): the game's ray (`terrain::game_ray`, the C
+  branches in f32) through 20,000 short segments in open space just above the surfaces, and the
+  tree nodes repeating an ancestor's plane. In-game: `HWVX_CARLOG=3` logs the car's pitch and
+  the terrain contacts (edge or box corner) every frame, `=4` each corner contact with its plane
+  and cell; `tools/world_pitch.sh` turns a drive into pitch spikes and contacts per 100 units.
+  `hwvx-x world smooth OUT --scale S`: rolling ground and a long hump in 25-unit quads, at any
+  scale; `--without decks,skirts,caps,fill,coplanar` on `world build` and `world smooth` to
+  measure what each repair buys.
+
+| | game ray hits air | nodes repeating a plane | pitch spikes / 100 units | corner contacts / 100 |
+|---|---|---|---|---|
+| smooth world ×0.33, before / after | 2.79% / 0.01% | 23,373 / 28 | 2.73 / 0.13 | 2.88 / 0.24 |
+| smooth world ×1 | 0.64% / 0% | 18,252 / 33 | 0.91 / 0.02 | 0.34 / 0.08 |
+| smooth world ×3 | 0.06% / 0% | 10,013 / 34 | 0 / 0 | 0 / 0 |
+| real level, 2.8333 units/m (main's build / now) | 0.23% / 0% | 17,914 / 2 | start 9.14 / 1.74, ramp 5.94 / 0.97 | 2.19 / 0.65, 2.26 / 0.49 |
+| real level, 8.5 units/m | 0.04% / 0% | 20,038 / 1 | start 16.4 (stuck) / 0.74, ramp 1.04 / 0.39 | 1.67 / 0.16, 0.43 / 0.45 |
+
+The real level at 2.8333: 18,004 nodes (from 41,090; most 503 a cell, from 1,450), 0.9 MB, 100.00%
+of its surfaces from above right. Crease edges were not the cause (edge contacts stayed near 0 on
+every drive); the level's low-poly floors still carry ~800 shallow creases (retail: 77-168).
+Drives into a cliff at either scale: before, the car ended inside the rock (8.5: stuck at once);
+now it climbs or turns away. The ramp demo now launches to y 85, where stage 1's first build did;
+the 106 measured since was a phantom kick at the lip.
+
 **For artists** (any world, no per-world settings): collision is built from the drawn meshes,
 each connected piece a solid; closed meshes are best, open-bottomed ones standing in the ground
 are fine; a floor with room under it may be one-sided (it becomes a slab); nodes named

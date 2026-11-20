@@ -275,6 +275,53 @@ fall-through.
   volumes, speakers, creatures and radar map are moved or dropped as §2 says; the radar map's
   texture slot is written by the refresh, so it is cleared at state 7.
 
+**Collision quality, second pass (branch `worlds-collision`).** Driving the real level showed
+poor collision at pillars and at a ramp between them. The surfaces seen from above were already
+99.84% right; the trouble was inside the masses, which a top-down check cannot see:
+
+* **A mass whose top is in the square above read as air in the square below** (only its walls
+  and some unrelated sheet were in that cell, so nothing said "solid here"); a car pressed into a
+  wall at a square's height, or climbing a slope across a square boundary, met air and snagged or
+  bounced. Measured on the real level: 2.2% of points inside the cells wrong that way, 28% in a
+  ring of pillars. Fix (`terrain::box_caps`): each cell's solid is **closed by the parts of the
+  cell's walls that lie inside the solid** (cut along the cell's surface planes, each piece kept
+  if "under a surface"), so the tree is exact in any polygon order; the solid squares next to
+  surfaced ones get a full box, so a car pushed through a wall meets solid.
+* **One-sided sheets.** "Under a surface is solid" (the inside test) filled the room under a
+  floating walkway down to the ground, and a sheet's plane ran on past its edges. Fixes: a sheet
+  piece (only up-facing triangles, with open edges) with more than 16 units of room under most of
+  it is made a **slab 4 thick** (`solidify_decks`: a bottom and walls round its open edges), and
+  every open edge of a floor gets a **skirt** down to the grid's bottom (`skirts`), so the solid
+  under a floor stops at its footprint. Skirts of two unwelded pieces meeting at a seam face each
+  other on one plane and drop out.
+* **Self-checks** (`world build` prints them): points on a 7^3 raster of every cell, and a unit
+  in front of / behind each face, against "under a surface" — phantom (solid where nothing is)
+  and hole (open inside a solid). Synthetic meshes in `cargo test synthetic` (an open-bottomed
+  hex pillar, a one-sided ramp between two pillars, unwelded and overlapping seams, a floating
+  deck, a ring of pillars under a grate; each repair off/on), plus a mass with a sheet through it.
+
+| real level (8.5 units/m, 9,312 triangles) | phantom / hole in cells | at faces | from above | cells, pack |
+|---|---|---|---|---|
+| stage 2 builder | 1.87% / 2.18% | 5.45% / 0.97% | 99.84% | 3,504, 2.1 MB |
+| + decks | 0.96% / 2.31% | 1.04% / 1.11% | 99.87% | |
+| + skirts | 0.02% / 3.05% | 1.04% / 0.92% | 99.89% | |
+| + caps (now) | 0.01% / 0.00% | 0.96% / 0.07% | 99.94% | 6,122, 4.2 MB |
+
+(The face phantoms left are on open-topped tubes: inside a tube's wall the inside test sees no
+face above and calls it air; the collision is right.) Drives: up the ramp between the pillars
+the car used to bounce back off air at y 144 and now climbs onto the plateau and on 3,800 units;
+along the pillar row it used to hang in the air at y 161 stuck (wheels spinning) and now meets
+the pillars' sides and drives on; no run went below a surface. The ramp demo drives as before.
+The collision pack doubled (the capped and the solid squares); the port has no limit, a console
+budget would need fewer solid squares.
+
+**For artists** (any world, no per-world settings): collision is built from the drawn meshes,
+each connected piece a solid; closed meshes are best, open-bottomed ones standing in the ground
+are fine; a floor with room under it may be one-sided (it becomes a slab); nodes named
+`*-colonly` / `*-convcolonly` (Godot's import suffixes) or with `extras.collision: true` are
+solid and not drawn, `collisionOnly` / `renderOnly` name patterns in the project do the same.
+A separate collision model beside the render one is not read yet.
+
 **Still open.** Surfaces are all material 0 (question 5); textures are base indices only
 (stage 6); a mod cannot ship the archive yet (stage 4); hub only, no streaming (stage 5).
 

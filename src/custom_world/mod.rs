@@ -535,3 +535,199 @@ mod env_tests {
         assert!(share > 0.995, "{:.2}% of the surfaces match", 100.0 * share);
     }
 }
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    /// A mesa (an open-bottomed block 450 high) on the ground with a sheet through it at 100
+    /// (a grate a modeller left running under the rock): the cells inside the mass whose top
+    /// is in another cell must read solid, not air (the hex pillars' and the ramp's trouble).
+    #[test]
+    fn mass_without_its_top_in_the_cell() {
+        let col = |ts: Vec<Tri>, object: u32| -> Vec<ColTri> {
+            ts.iter().map(|t| ColTri { p: t.p.map(|v| v.map(|x| x as f64)), material: 0, object }).collect()
+        };
+        let uv = [[0.0, 0.0]; 4];
+        let ground = quad([[-1000.0, 0.0, -1000.0], [-1000.0, 0.0, 1000.0], [1000.0, 0.0, 1000.0], [1000.0, 0.0, -1000.0]], uv, [9; 3]).to_vec();
+        let mut mesa = box_faces([-300.0, 0.0, -300.0], [300.0, 450.0, 300.0], [9; 3]);
+        mesa.retain(|t| normal(&t.p)[1] > -0.5); // no bottom
+        let sheet = quad([[-600.0, 100.0, -600.0], [-600.0, 100.0, 600.0], [600.0, 100.0, 600.0], [600.0, 100.0, -600.0]], uv, [9; 3]).to_vec();
+        let mut tris = col(ground, 0);
+        tris.extend(col(mesa, 1));
+        tris.extend(col(sheet, 2));
+        let g = terrain::build_grid(&tris, &terrain::Options::default()).unwrap();
+        for y in [20.0, 99.0, 101.0, 150.0, 250.0, 380.0, 449.0] {
+            for (x, z) in [(0.0, 0.0), (-250.0, 200.0), (280.0, -280.0)] {
+                assert!(g.solid([x, y, z]), "air inside the mesa at {x} {y} {z}");
+            }
+        }
+        assert!(!g.solid([0.0, 451.0, 0.0]) && !g.solid([450.0, 101.0, 0.0]) && g.solid([450.0, 99.0, 0.0]));
+        let (_, phantom, hole) = terrain::volume_check(&tris, &g, 7);
+        assert_eq!((phantom, hole), (0, 0));
+    }
+}
+
+/// Synthetic meshes with the weaknesses modellers' worlds have, and the collision measured on
+/// them with each repair off and on (`cargo test --release synthetic -- --nocapture` prints the
+/// table). Each is general, none is one world's.
+#[cfg(test)]
+mod synthetic {
+    use super::*;
+    use terrain::{build_grid, face_check, volume_check, ColTri, Options, V3};
+
+    fn tri(p: [V3; 3], object: u32) -> ColTri {
+        ColTri { p, material: 0, object }
+    }
+    /// A quad a b c d (counter-clockwise from its front) as two triangles.
+    fn quad(q: [V3; 4], object: u32) -> Vec<ColTri> {
+        vec![tri([q[0], q[1], q[2]], object), tri([q[0], q[2], q[3]], object)]
+    }
+    /// The ground: an open plane at y 0, `n` x `n` quads of `s`.
+    fn ground(n: usize, s: f64, object: u32) -> Vec<ColTri> {
+        let h = n as f64 * s / 2.0;
+        let mut out = vec![];
+        for i in 0..n {
+            for j in 0..n {
+                let (x, z) = (-h + i as f64 * s, -h + j as f64 * s);
+                out.extend(quad([[x, 0.0, z], [x, 0.0, z + s], [x + s, 0.0, z + s], [x + s, 0.0, z]], object));
+            }
+        }
+        out
+    }
+    /// An open-bottomed hexagonal pillar (walls and a top, no bottom) from y0 to y1.
+    fn hex_pillar(cx: f64, cz: f64, r: f64, y0: f64, y1: f64, object: u32) -> Vec<ColTri> {
+        let p: Vec<(f64, f64)> = (0..6).map(|k| {
+            let a = std::f64::consts::PI / 3.0 * k as f64;
+            (cx + r * a.cos(), cz + r * a.sin())
+        }).collect();
+        let mut out = vec![];
+        for k in 0..6 {
+            let (a, b) = (p[k], p[(k + 1) % 6]);
+            // outward: counter-clockwise from outside
+            out.extend(quad([[a.0, y0, a.1], [a.0, y1, a.1], [b.0, y1, b.1], [b.0, y0, b.1]], object));
+            out.push(tri([[cx, y1, cz], [b.0, y1, b.1], [a.0, y1, a.1]], object));
+        }
+        // make each face point out, whatever the winding above came to
+        for t in out.iter_mut() {
+            let pl = terrain::plane_of(&t.p).unwrap();
+            let c: V3 = std::array::from_fn(|k| (t.p[0][k] + t.p[1][k] + t.p[2][k]) / 3.0);
+            let out_dir = [c[0] - cx, if pl[1].abs() > 0.5 { 1.0 } else { 0.0 }, c[2] - cz];
+            if pl[0] * out_dir[0] + pl[1] * out_dir[1] + pl[2] * out_dir[2] < 0.0 {
+                t.p.swap(1, 2);
+            }
+        }
+        out
+    }
+
+    fn measure(name: &str, tris: &[ColTri]) -> Vec<(String, usize, usize, usize)> {
+        let mut rows = vec![];
+        for (label, opt) in [
+            ("none", Options { decks: false, skirts: false, caps: false, ..Default::default() }),
+            ("decks", Options { skirts: false, caps: false, ..Default::default() }),
+            ("+skirts", Options { caps: false, ..Default::default() }),
+            ("+caps (all)", Options::default()),
+        ] {
+            let g = build_grid(tris, &opt).unwrap();
+            let (n, ph, ho) = volume_check(tris, &g, 7);
+            let f = face_check(tris, &g);
+            let (fs, fp, fh) = f.values().fold((0, 0, 0), |a, s| (a.0 + s.samples, a.1 + s.phantom, a.2 + s.hole));
+            eprintln!("{name:22} {label:12} volume {n:6}: phantom {ph:5} hole {ho:5} | faces {fs:5}: phantom {fp:4} hole {fh:4}");
+            rows.push((label.to_string(), ph + ho, fp + fh, n));
+        }
+        rows
+    }
+
+    fn all_clean(rows: &[(String, usize, usize, usize)]) {
+        let last = rows.last().unwrap();
+        assert_eq!((last.1, last.2), (0, 0), "{} still has errors", last.0);
+    }
+
+    /// An open-bottomed hex pillar sunk into the ground, taller than a square.
+    #[test]
+    fn synthetic_hex_pillar() {
+        let mut t = ground(8, 100.0, 0);
+        t.extend(hex_pillar(30.0, -20.0, 60.0, -15.0, 330.0, 1));
+        let rows = measure("hex pillar", &t);
+        all_clean(&rows);
+        let g = build_grid(&t, &Options::default()).unwrap();
+        for y in [1.0, 100.0, 199.0, 201.0, 329.0] {
+            assert!(g.solid([30.0, y, -20.0]), "inside the pillar at {y}");
+            assert!(!g.solid([150.0, y, -20.0]), "beside the pillar at {y}");
+        }
+        assert!((g.ground_below([30.0, 400.0, -20.0], 500.0, 0.25).unwrap() - 330.0).abs() < 0.3);
+    }
+
+    /// A one-sided ramp (a single sloped sheet) from the ground up to the tops of two pillars.
+    #[test]
+    fn synthetic_ramp_between_pillars() {
+        let mut t = ground(8, 100.0, 0);
+        t.extend(hex_pillar(-150.0, 0.0, 60.0, -10.0, 150.0, 1));
+        t.extend(hex_pillar(150.0, 0.0, 60.0, -10.0, 150.0, 2));
+        // from z -300 at the ground up to z 0 at 150, between the pillars, open all round
+        t.extend(quad([[-90.0, 0.0, -300.0], [-90.0, 150.0, 0.0], [90.0, 150.0, 0.0], [90.0, 0.0, -300.0]], 3));
+        let rows = measure("ramp between pillars", &t);
+        all_clean(&rows);
+        let g = build_grid(&t, &Options::default()).unwrap();
+        for z in [-280.0, -200.0, -100.0, -20.0] {
+            let want = 150.0 * (z + 300.0) / 300.0;
+            let got = g.ground_below([0.0, want + 30.0, z], 300.0, 0.1).unwrap();
+            assert!((got - want).abs() < 0.3, "the ramp at z {z}: {got} not {want}");
+        }
+        // the high end of a one-sided ramp is a slab: room under it
+        assert!(!g.solid([0.0, 60.0, -20.0]) && g.solid([0.0, 148.0, -2.0]));
+    }
+
+    /// Two halves of a floor that were never welded: an overlap of 0.5 and a gap of 0.01.
+    #[test]
+    fn synthetic_unwelded_seams() {
+        let mut t = vec![];
+        t.extend(quad([[-400.0, 0.0, -400.0], [-400.0, 0.0, 400.0], [0.25, 0.0, 400.0], [0.25, 0.0, -400.0]], 0));
+        t.extend(quad([[-0.25, 0.0, -400.0], [-0.25, 0.0, 0.0], [400.0, 0.0, 0.0], [400.0, 0.0, -400.0]], 1));
+        t.extend(quad([[0.0, 0.0, 0.01], [0.0, 0.0, 400.0], [400.0, 0.0, 400.0], [400.0, 0.0, 0.01]], 2));
+        // and a box standing on the seam
+        t.extend(hex_pillar(0.0, 0.0, 40.0, 0.0, 60.0, 3));
+        let rows = measure("unwelded seams", &t);
+        all_clean(&rows);
+        let g = build_grid(&t, &Options::default()).unwrap();
+        for (x, z) in [(0.0, -200.0), (0.2, 200.0), (200.0, 0.005), (-200.0, 0.0), (0.1, 0.1 + 41.0)] {
+            assert!(g.ground_below([x, 20.0, z], 50.0, 0.1).is_some_and(|y| y.abs() < 0.2), "a hole in the floor at {x} {z}");
+        }
+    }
+
+    /// A ring of touching hex pillars round a pool (a lower floor sheet inside), a grate sheet
+    /// laid over the ring at the pillars' top, and a sheet running under it all (what the
+    /// modeller left of a walkway): masses whose tops are in the squares above.
+    #[test]
+    fn synthetic_pillar_ring_and_grate() {
+        let mut t = ground(10, 100.0, 0);
+        let r = 50.0;
+        for k in 0..6 {
+            let a = std::f64::consts::PI / 3.0 * k as f64;
+            t.extend(hex_pillar(150.0 * a.cos(), 150.0 * a.sin(), r, -10.0, 300.0, 1 + k));
+        }
+        t.extend(quad([[-120.0, 200.0, -120.0], [-120.0, 200.0, 120.0], [120.0, 200.0, 120.0], [120.0, 200.0, -120.0]], 10));
+        t.extend(quad([[-220.0, 300.0, -220.0], [-220.0, 300.0, 220.0], [220.0, 300.0, 220.0], [220.0, 300.0, -220.0]], 11));
+        t.extend(quad([[-400.0, 40.0, -400.0], [-400.0, 40.0, 400.0], [400.0, 40.0, 400.0], [400.0, 40.0, -400.0]], 12));
+        let rows = measure("pillar ring + grate", &t);
+        all_clean(&rows);
+        let g = build_grid(&t, &Options::default()).unwrap();
+        for y in [50.0, 150.0, 250.0, 297.0] {
+            assert!(g.solid([150.0, y, 0.0]), "inside a pillar at {y}");
+        }
+        assert!(!g.solid([0.0, 250.0, 0.0]) && !g.solid([0.0, 320.0, 0.0]) && g.solid([0.0, 298.0, 0.0]));
+    }
+
+    /// A thin one-sided deck floating over the ground: a car fits under it.
+    #[test]
+    fn synthetic_floating_deck() {
+        let mut t = ground(6, 100.0, 0);
+        t.extend(quad([[-100.0, 60.0, -150.0], [-100.0, 60.0, 150.0], [100.0, 60.0, 150.0], [100.0, 60.0, -150.0]], 1));
+        let rows = measure("floating deck", &t);
+        all_clean(&rows);
+        let g = build_grid(&t, &Options::default()).unwrap();
+        assert!(!g.solid([0.0, 30.0, 0.0]), "no room under the deck");
+        assert!(g.solid([0.0, 58.0, 0.0]) && !g.solid([0.0, 61.0, 0.0]) && !g.solid([150.0, 30.0, 0.0]));
+        assert!((g.ground_below([0.0, 50.0, 0.0], 100.0, 0.1).unwrap()).abs() < 0.2);
+    }
+}

@@ -20,6 +20,7 @@ player's own copy of the world, and the game applies it when the level loads.
 7. Test drive
 8. Saving, undo and redo
 9. Sharing your level (packaging)
+9b. New cars and weapons (the Content tab)
 10. Limits and known issues
 11. Troubleshooting
 
@@ -508,6 +509,36 @@ A test drive (F5) already runs your level exactly as players will get it: the le
 
 ---
 
+## 9b. New cars and weapons (the Content tab)
+
+The **Content** tab (or **View > Content**) makes a **mod** of new cars and weapons built from the
+game's own: each one takes a base car or weapon (its model, sounds and scripts come from the
+player's copy) and changes its numbers and paint. A mod holds no game data.
+
+* **Open** a mod's folder (the one with `mod.jsonc`), or **New mod…**: a name, an author and the
+  folder it goes in. The `night-shift` sample (`tools/mod-samples/night-shift`) is one to look at.
+* **+ New car** / **+ New weapon**: pick what it's made from (cars by name; weapons as the item
+  select numbers them, 0-11) and a name. It gets an id of its own (`uid://…`); the game gives it
+  the next free number when the mod is on (the first new car is 33, the first weapon 12).
+* **The inspector** on the right: the name, what it's made from, **unlocked** (from the start),
+  and for a car its **Paint** (a hue shift and brightness on one of its textures, applied to the
+  player's own texture as it loads). Below, the **numbers** by part (a car's engine and gears,
+  handling, acceleration and brakes, stunts; a weapon's weapon and pickup values): tick a field
+  to set it for this car, untick it to go back to the base's value.
+* **▶ Drive it** (cars) / **▶ Try it** (weapons), or **F5** on this tab: saves, then starts the
+  game with the mod on, in a Challenge race in the car or a Battle with the weapon. **■ Stop** in
+  the top bar ends it.
+* **💾 Save** (Ctrl+S on this tab) writes `mod.jsonc`, keeping its comments. **Save as mod…**
+  packs it into an `.xmod` after the check for game data, as for levels (section 9).
+
+Mods made here install like any other (the game's launcher, Mods tab). New weapons are copies of
+their own: changing one leaves the weapon it was made from as it was.
+
+Not yet: a car's own model (only a base car's, repainted), weapon names in the picker (numbers),
+new pickups (docs/plans/pickups-and-briefings.md).
+
+---
+
 ## 10. Limits and known issues
 
 * **New volumes of types other than airbox** (force, fog, reverb, light, creature) aren't yet in
@@ -515,7 +546,6 @@ A test drive (F5) already runs your level exactly as players will get it: the le
 * **Items and effect points** can only go into quadrants that already have some (section 4).
 * **The intro screen's text** is the base level's; your level's text shows as the objective
   line (pause, win and lose screens).
-* **The Car picker is a number**, not the car's name.
 * **The axis gizmo can't be dragged.** Move with Ctrl/Cmd + drag over the ground, or type the
   numbers.
 * **The live preview** shows your volumes, timers, variables, texts and patches; your own starts,

@@ -166,17 +166,31 @@ project made on the same world to give it a race.
 
 #### What each mode gets on a Joyride world, and what it needs
 
-A Joyride world's script is free roam: an intro box, the player's car held until it is closed,
-music; nothing ends the level and nothing counts rounds. A level of another mode keeps that
-script (minus the collectibles) and New level adds the rest as files of its own, to change:
+A level of another mode on a Joyride world looks and plays like that mode: the game loads the
+mode's own screens beside the world (`modeWorld`: the world pack of the mode's first retail level,
+Challenge 1, Mission 1, Battle 1 or Drag Race 1, its data only, its script never run), and New
+level writes the mode's flow as the level's own triggers, the way the mode's retail levels play
+it. The Joyride world keeps its effects and music; its free-roam intro, its gears and key go.
 
-| mode | the template adds | you add | the checks warn when |
+| mode | the template plays (the mode's own screens) | you add | the checks warn when |
 |---|---|---|---|
-| Challenge | a 60 s clock on the HUD (`clock`, timer type 12, the HUD's), started when the intro box closes (`go`), `timeout`: lost at 0; a briefing line in the intro box (`brief`) | what wins it: a trigger with `end_level` result 4 (a volume to reach) | nothing ends it won |
-| Mission | the same (no briefing screen: the game leaves out the alias mission's, which tells of another world) | the objectives and what wins it | nothing ends it won |
-| Battle | round rules (kills 5, 3 rounds, 2 minutes on the HUD's round clock: `rules.roundTimer`), `next-round` (a round won: the car held, `reset_game_round` after 3 s), `won`/`lost` (the series over: `end_level` by whether player 1 won it) | opponents: a start each (port 0, the AI's) | under 2 starts; no `game_rounds_complete` trigger that ends the level; an AI start (it roams) |
-| Drag race | rules (no target, 1 round), the same round flow | 3 more starts, one per lane (**Lanes: Check the lanes**), a finish volume and a `round_complete` trigger per car | not 4 starts; no round flow; an AI start |
+| Challenge | `start`: the challenge's intro box with your briefing line (`brief`), A to begin; `go`: its start (the lights, the HUD), the 60 s clock (`clock`, the HUD's); `won`: when `goal` is 1, **Objective Complete** (Continue, Restart, Save, Main Menu); `timeout`: at 0, **Objective Failed** (Retry, Main Menu) | what sets `level://variables/goal` to 1 (a volume to reach) | nothing sets `goal` |
+| Mission | the same with the mission's screens (its intro box, Objective Complete, Objective Failed); no briefing of another mission (the game leaves the alias's out) | the objectives and what sets `goal` | nothing sets `goal` |
+| Battle | `start`: the battle's countdown, the round clock (`clock`, `rules.roundTimer`); round rules (5 kills, 3 rounds, 2 minutes); `round-over`, `series-over`: the battle's **results** (standings: opponents disabled, rounds won; after the last round **Summary: Match Complete!** with Restart and Main Menu); `next-round`: when they're closed, the next round and its countdown | opponents: a start each (port 0, the AI's), added to the cars of `start`, `round-over`, `series-over` and `next-round` | under 2 starts; an AI start (it roams) |
+| Drag race | the drag race's countdown, the same results (times, rounds won, Summary), `timeout`: **Out of Time** and the round to player 2 | 3 more starts, one per lane (**Lanes: Check the lanes**), a finish volume and a trigger per car: `round_complete` N and the mode's **Player N WINS!!** (`base://race1l2/world_0/trigger/1N/actions/1/data/p0`) | not 4 starts; an AI start |
 
+The screens behave as on the mode's retail levels: Continue after Objective Complete goes on as a
+won challenge or mission does; Retry plays the level again (its opening first); Main Menu (and the
+battle's and drag race's Summary) goes back to the menus.
+
+* **The screens are the same in every level of a mode.** `xdlrs level screens WORLD` fingerprints
+  the screens a world's script plays (every record they reach, slots zeroed, their textures' and
+  sounds' own bytes): across all 18 challenges, 14 missions, 8 battle arenas and 12 drag strips
+  (GameCube) each role has one shape per mode; the only differences are in world 5's levels (ch5,
+  world5l1-2, race5, bat5/bat8: a texture of their own where the others share one). Challenge
+  and mission even share their Objective Complete and Objective Failed screens, and the Joyride
+  intro box is the challenge's.
+  So the first retail level of each mode serves every level of it on another world.
 * **One start.** A Joyride world has the player's start only (a battle world has 7, a drag
   world 4). Battles and drag races add theirs: + Add > Start, here.
 * **AI on an open world.** The world has no AI scripts of the mode (a battle world's cars attack,
@@ -185,14 +199,11 @@ script (minus the collectibles) and New level adds the rest as files of its own,
   cars as traffic, rivals in a battle, or leave them out and race the clock (the joyride-drag
   sample). An AI start is port 0 in the editor; the game gets port 6 (the AI's) and spawns it
   with the level.
-* **No results screens.** A battle or drag world shows its round and final results with
-  interfaces of its own pack; a Joyride world has none, so the template's round flow goes on to
-  the next round after 3 s and ends the level after the last. The win and lose of a challenge or
-  mission go straight back to the menu (a challenge world's "objective complete" screen is in
-  its own pack too).
-* **The intro box.** The Joyride intro shows the world's objectives by their HUD ids (1, 2). The
-  removed objectives are hidden and lose their ids, so the level's own objective with id 1 (the
-  template's `brief`) is the intro's text. Keep it short (the box holds about two lines).
+* **The intro box.** The mode's intro shows the objectives by their HUD ids. The removed Joyride
+  objectives are hidden and lose their ids, so the level's own objective with id 1 (the template's
+  `brief`) is the intro's text. Keep it short (the box holds about two lines).
+* **Test drive.** A level with the mode's screens is applied at run time (its level file, as a
+  shared mod's is), not built into a world pack of its own.
 * **Lanes and the spawn box.** Open worlds are wide; the start checks (the cars' box against the
   world, starts overlapping) and **Check the lanes** work as on any world.
 

@@ -2699,6 +2699,47 @@ Retail has no challenge on world 4, and no mission, battle or drag race on any J
 every (mode, Joyride world) pair but Joyride's own is new (challenges exist on worlds 1, 2, 3 and
 5 as separate challenge levels; battles and drag races only on their arenas and strips).
 
+##### The mode's own screens (`modeWorld`, 0.2.0)
+
+A level of a mode on another mode's world looks and behaves like its mode: its intro box, start,
+HUD, Objective Complete / Objective Failed, round results and final standings, and what they do
+(Continue, Retry, Restart, Main Menu), as on the mode's retail levels. Those screens are
+interfaces of the mode's world packs, which a Joyride world hasn't.
+
+* **Are they the same in every level of a mode?** `xdlrs level screens WORLD --data D`
+  fingerprints each screen a world's triggers play: a hash of every record it reaches (pointer
+  slots zeroed, the links' shape, its textures' and sounds' own bytes, whatever their numbers in
+  the pack). Over every retail level (GameCube): Challenge (18 levels) one shape per screen
+  (intro box, start, Objective Complete, Objective Failed); Mission (14) the same; Battle (8) one
+  results screen; Drag race (6 single-player, 6 multi-player) one each for the results, Player
+  N WINS, Out of Time. The only differences: world 5's levels (ch5_l1-5, world5l1-2, race5l1-2,
+  bat5_l1, bat8_l1) carry another texture where the others share one (in ch5_l3 the screens'
+  `texture/10`, 262,144 bytes, where ch1_l2's is 43,648): the same screens drawn with another
+  picture.
+  Challenge and mission share their Objective Complete and Objective Failed; the Joyride intro
+  box is the challenge's. So a mode's first retail level is its common screen pack:
+  `xdlrs::level_template::mode_screens` names it (Challenge 1 `ch1_l2`, Mission 1 `world1l1`,
+  Battle 1 `bat1_l1`, Drag Race 1 `race1l2`) and the paths its triggers name each screen by.
+* `level.jsonc` `modeWorld` (the MCP's path of that level's world): base links into its archive
+  are allowed for what its triggers name (`base://ch1_l2/world_0/trigger/15/actions/4/data/p0`:
+  Objective Complete), compiled as walks with root `"mode"`; the level file carries `modeWorld`.
+  A level with it is applied at run time (a test drive doesn't build its own world pack).
+* `Port_Level.c` `ModeLoad`: the level file's `modeWorld` is loaded beside the level's world as
+  a second world pack (`g_MaxStreamingDataPacks[4]` 2 in the port), its data only: its triggers
+  are counted out before the refresh (never activated, never released), its World is never the
+  game's, the pointer list the loader notes for the level's world is kept across it. Root
+  `"mode"` walks start at its trigger table and stay in its blob; a level trigger may name a
+  record a trigger of it names (`ModeParamHandle`: the words its triggers' parameter blocks hold).
+  Released with the level (`level: the mode's screens (...) released`). Texture slots: two
+  worlds' textures pass the release's 511, so the port's texture table is made for
+  `PORT_MAX_TEXTURES` and `Port_TexturesWiden` uses all of it from then on (without it the
+  world's own textures landed in the last slot: white HUD and cars).
+* The template (`xdlrs level new`, the editor's New level) writes the mode's flow as the level's
+  triggers, after the mode's retail scripts (challenge: Challenge 1's, as checkpoint-run's;
+  mission: Mission 1's; battle: Battle 1's `t0`, `t2`-`t4`; drag: Drag Race 1's `t16`, `t25`-
+  `t28`), and drops the Joyride script's intro (its triggers that play or wait for an interface),
+  keeping their music in the level's `start` and `go`.
+
 ##### Samples and tests
 
 `tools/level-samples` (each made with `xdlrs level new`, then given its goal):

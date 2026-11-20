@@ -251,6 +251,17 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum WorldCmd {
+    /// A smooth, finely triangulated test world (rolling ground, a long hump) at a scale, to
+    /// measure how smoothly a car drives it (HWVX-SDL tools/world_pitch.sh)
+    Smooth {
+        /// Folder for world.xgc and world.jsonc
+        output: PathBuf,
+        #[arg(long, default_value_t = 1.0)]
+        scale: f32,
+        /// Leave out repairs (as world build --without)
+        #[arg(long, default_value = "")]
+        without: String,
+    },
     /// The generated test world: a ground, a ramp and a wall (stage 1)
     Demo {
         /// Folder for world.xgc and world.jsonc
@@ -270,6 +281,10 @@ enum WorldCmd {
         /// (brighter is higher; the start red, its heading a red line)
         #[arg(long)]
         heightmap: bool,
+        /// Leave out repairs of the collision, to measure what each buys: any of
+        /// decks, skirts, caps, edges (comma separated)
+        #[arg(long, default_value = "")]
+        without: String,
     },
     /// List a glTF's mesh nodes, materials and bounds (model units)
     Inspect { model: PathBuf },
@@ -1208,6 +1223,17 @@ fn cmd_patch_exe(exe: &Path, revert: bool) -> Result<ExitCode> {
 fn cmd_world(cmd: WorldCmd) -> Result<ExitCode> {
     use hwvx_xfile::custom_world as cw;
     match cmd {
+        WorldCmd::Smooth { output, scale, without } => {
+            let src = cw::smooth(scale);
+            let b = cw::build(&src, &repairs(&without)?)?;
+            let (sn, ss) = cw::terrain::sliver_nodes(&b.grid);
+            out!("tree nodes repeating an ancestor's plane (float-thin solid leaves): {ss} of {sn}");
+            let (rn, rh) = cw::terrain::ray_check(&b.grid, 20000);
+            out!("the game's ray through open space just over the surfaces: {rh} of {rn} short segments hit something ({:.2}%)", 100.0 * rh as f64 / rn.max(1) as f64);
+            write_world(&output, &b, &cw::world_jsonc("uid://hwvx-world-smooth", "Smooth", 0, "world", b.geometries, src.start, &format!("hwvx-x world smooth --scale {scale}: rolling ground and a hump, finely triangulated")))?;
+            out!("{}", b.report());
+            Ok(ExitCode::SUCCESS)
+        }
         WorldCmd::Demo { output, gltf } => {
             let src = cw::demo();
             if gltf {
@@ -1221,7 +1247,7 @@ fn cmd_world(cmd: WorldCmd) -> Result<ExitCode> {
             out!("{}", b.report());
             Ok(ExitCode::SUCCESS)
         }
-        WorldCmd::Build { project, output, heightmap } => cmd_world_build(&project, &output, heightmap),
+        WorldCmd::Build { project, output, heightmap, without } => cmd_world_build(&project, &output, heightmap, &without),
         WorldCmd::Inspect { model } => cmd_world_inspect(&model),
         WorldCmd::Probe { project, x, z } => cmd_world_probe(&project, x, z),
     }
@@ -1235,7 +1261,8 @@ fn write_world(output: &Path, b: &hwvx_xfile::custom_world::Built, jsonc: &str) 
     Ok(())
 }
 
-fn cmd_world_build(project: &Path, output: &Path, heightmap: bool) -> Result<ExitCode> {
+fn cmd_world_build(project: &Path, output: &Path, heightmap: bool, without: &str) -> Result<ExitCode> {
+    let opt = repairs(without)?;
     use hwvx_xfile::custom_world as cw;
     let p = cw::gltf_in::Project::read(project)?;
     let (src, rep) = cw::gltf_in::import(&p)?;
@@ -1245,7 +1272,7 @@ fn cmd_world_build(project: &Path, output: &Path, heightmap: bool) -> Result<Exi
     for (m, n) in &rep.materials {
         out!("  material {m:?}: {n} triangles drawn");
     }
-    let b = cw::build(&src, &cw::terrain::Options::default())?;
+    let b = cw::build(&src, &opt)?;
     let mut src = src;
     let s = src.start.map(|x| x as f64);
     let ground = b.grid.ground_below([s[0], s[1], s[2]], 1.0e5, 1.0);
@@ -1256,6 +1283,10 @@ fn cmd_world_build(project: &Path, output: &Path, heightmap: bool) -> Result<Exi
     let comment = format!("hwvx-x world build {}", project.display());
     write_world(output, &b, &cw::world_jsonc(&p.id, &p.name, p.base, "world", b.geometries, src.start, &comment))?;
     out!("start {:.1} {:.1} {:.1} heading {:.1}", src.start[0], src.start[1], src.start[2], src.start[3]);
+    let (sn, ss) = cw::terrain::sliver_nodes(&b.grid);
+    out!("tree nodes repeating an ancestor's plane (float-thin solid leaves): {ss} of {sn}");
+    let (rn, rh) = cw::terrain::ray_check(&b.grid, 20000);
+    out!("the game's ray through open space just over the surfaces: {rh} of {rn} short segments hit something ({:.2}%)", 100.0 * rh as f64 / rn.max(1) as f64);
     let (vn, vp, vh) = cw::terrain::volume_check(&src.collision, &b.grid, 7);
     let (fs, fp, fh) = cw::terrain::face_check(&src.collision, &b.grid).values().fold((0, 0, 0), |a, s| (a.0 + s.samples, a.1 + s.phantom, a.2 + s.hole));
     out!("solid where nothing is / open inside a solid: {:.2}% / {:.2}% of {vn} points in the cells, {:.2}% / {:.2}% of {fs} points a unit off the faces", 100.0 * vp as f64 / vn.max(1) as f64, 100.0 * vh as f64 / vn.max(1) as f64, 100.0 * fp as f64 / fs.max(1) as f64, 100.0 * fh as f64 / fs.max(1) as f64);
@@ -1343,4 +1374,20 @@ fn cmd_world_probe(project: &Path, x: f64, z: f64) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The collision options with the repairs `without` names left out.
+fn repairs(without: &str) -> Result<hwvx_xfile::custom_world::terrain::Options> {
+    let mut opt = hwvx_xfile::custom_world::terrain::Options::default();
+    for w in without.split(',').filter(|w| !w.is_empty()) {
+        match w {
+            "decks" => opt.decks = false,
+            "skirts" => opt.skirts = false,
+            "caps" => opt.caps = false,
+            "fill" => opt.fill = false,
+            "coplanar" => hwvx_xfile::custom_world::terrain::KEEP_COPLANAR.store(true, std::sync::atomic::Ordering::Relaxed),
+            _ => bail!("--without: no repair {w:?} (decks, skirts, caps, fill, coplanar)"),
+        }
+    }
+    Ok(opt)
 }

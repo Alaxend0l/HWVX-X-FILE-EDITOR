@@ -61,15 +61,23 @@ pub struct Options {
     pub decks: bool,
     pub skirts: bool,
     pub caps: bool,
+    pub fill: bool,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { cell_xz: 250.0, cell_y: 200.0, crease_deg: 0.5, decks: true, skirts: true, caps: true }
+        Options { cell_xz: 250.0, cell_y: 200.0, crease_deg: 0.5, decks: true, skirts: true, caps: true, fill: true }
     }
 }
 
 const EPS: f64 = 1e-4;
+/// Planes this close (normals within 0.26 degrees, the polygon within 0.01 units of the
+/// splitter) are one plane in a tree ([`build_tree`]).
+pub const COPLANAR_COS: f64 = 0.99999;
+pub const COPLANAR_DIST: f64 = 0.01;
+/// Keep near-coplanar polygons as nodes of their own (the old way), to measure what dropping
+/// them buys (`hwvx-x world build --without coplanar`).
+pub static KEEP_COPLANAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const EDGE_REACH: f64 = 10.0;
 const LEAF: u16 = 0xFFFF;
 pub const VERSION: u32 = 0xD;
@@ -182,9 +190,22 @@ pub fn build_tree(polys: Vec<Poly>, limit: usize) -> Result<Vec<Node>> {
         let n = [plane[0], plane[1], plane[2]];
         let (mut front, mut back) = (vec![], vec![]);
         for p in it {
+            // a polygon in (or within a hair of) the splitter's plane facing the same way says
+            // nothing the splitter does not: dropped (one exactly in it facing the other way
+            // goes too, below: two solids touch there; one a hair off it facing the other way
+            // stays, it may be the other side of a thin sheet). Kept as a node of its own (the exporter's rule) a nearly
+            // coplanar one leaves a solid leaf as thin as the float error behind its plane,
+            // which the game's ray (RayHitsBSP2) hits wherever it ends a piece of a ray on
+            // the parent's plane: a phantom face anywhere along that plane in the cell. Many
+            // small triangles of one gentle surface in a cell (a fine mesh, a small scale)
+            // made many of them: the car's box corners struck them and its nose lifted.
+            let pn = [p.plane[0], p.plane[1], p.plane[2]];
+            if !KEEP_COPLANAR.load(std::sync::atomic::Ordering::Relaxed) && dot(n, pn) > COPLANAR_COS && p.verts.iter().all(|v| dist(*v, plane).abs() < COPLANAR_DIST) {
+                continue;
+            }
             match split_poly(&p.verts, plane, EPS) {
                 Side::On => {
-                    if dot(n, [p.plane[0], p.plane[1], p.plane[2]]) > 0.0 {
+                    if KEEP_COPLANAR.load(std::sync::atomic::Ordering::Relaxed) && dot(n, pn) > 0.0 {
                         front.push(p);
                     }
                 }
@@ -298,7 +319,7 @@ pub type Edge = (V3, V3, u32);
 
 /// Edges where two faces meet at more than `deg` degrees, and how many edges
 /// of the welded mesh are open (one face) or shared by more than two.
-pub fn crease_edges(tris: &[ColTri], deg: f64) -> (Vec<Edge>, usize, usize) {
+pub fn crease_edges(tris: &[ColTri], deg: f64, buried: &dyn Fn(V3) -> bool) -> (Vec<Edge>, usize, usize) {
     let ids = weld(tris, 1e-3);
     let normals: Vec<Option<V3>> = tris.iter().map(|t| plane_of(&t.p).map(|p| [p[0], p[1], p[2]])).collect();
     let mut faces: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
@@ -325,7 +346,15 @@ pub fn crease_edges(tris: &[ColTri], deg: f64) -> (Vec<Edge>, usize, usize) {
             1 => open += 1,
             2 => {
                 let ((i, k), (j, _)) = (fs[0], fs[1]);
-                if dot(normals[i].unwrap(), normals[j].unwrap()) < cos {
+                let (ni, nj) = (normals[i].unwrap(), normals[j].unwrap());
+                // an edge where faces inside another solid meet (a pillar's foot under the
+                // ground, a mesh running through itself) is no crease of the collision: a box
+                // near it would catch on it
+                let (a, b) = (tris[i].p[k], tris[i].p[(k + 1) % 3]);
+                let s = [ni[0] + nj[0], ni[1] + nj[1], ni[2] + nj[2]];
+                let ls = len(s).max(1e-9);
+                let off = [(a[0] + b[0]) / 2.0 + s[0] / ls * 0.05, (a[1] + b[1]) / 2.0 + s[1] / ls * 0.05, (a[2] + b[2]) / 2.0 + s[2] / ls * 0.05];
+                if dot(ni, nj) < cos && !buried(off) {
                     out.push((tris[i].p[k], tris[i].p[(k + 1) % 3], tris[i].material));
                 }
             }
@@ -385,7 +414,7 @@ pub struct Cell {
 
 impl Grid {
     /// The square holding a point, if inside the grid.
-    fn square(&self, p: V3) -> Option<[usize; 3]> {
+    pub fn square(&self, p: V3) -> Option<[usize; 3]> {
         let mut s = [0usize; 3];
         for k in 0..3 {
             let f = ((p[k] - self.lo[k]) / self.size[k]).floor();
@@ -500,7 +529,8 @@ pub fn build_grid(tris: &[ColTri], opt: &Options) -> Result<Grid> {
     let (nx, ny, nz) = (n[0], n[1], n[2]);
 
     // polygons per square, in source order, then the skirts
-    let skirts = if opt.skirts { skirts(tris, lo[1]) } else { vec![] };
+    let objects = Objects::new(tris, lo, size, nx, nz);
+    let skirts = if opt.skirts { skirts(tris, lo[1], &objects) } else { vec![] };
     let mut per: HashMap<[usize; 3], Vec<(u32, Poly)>> = HashMap::new();
     for t in tris.iter().chain(&skirts) {
         let Some(plane) = plane_of(&t.p) else { continue };
@@ -527,8 +557,7 @@ pub fn build_grid(tris: &[ColTri], opt: &Options) -> Result<Grid> {
         }
     }
 
-    let (edges, open_edges, shared_edges) = crease_edges(tris, opt.crease_deg);
-    let objects = Objects::new(tris, lo, size, nx, nz);
+    let (edges, open_edges, shared_edges) = crease_edges(tris, opt.crease_deg, &|p| objects.inside_any(p));
     ensure!(edges.len() <= 0xFFFF, "{} crease edges: the cells' edge indices are u16", edges.len());
     // the squares with surfaces, and the solid ones next to them (a car pushed through a cap
     // meets solid, not an empty square)
@@ -551,7 +580,7 @@ pub fn build_grid(tris: &[ColTri], opt: &Options) -> Result<Grid> {
             }
         }
     }
-    if opt.caps {
+    if opt.caps && opt.fill {
         keys.extend(&solid_next);
     }
     keys.sort_by_key(|k| (k[1], k[2], k[0]));
@@ -885,9 +914,6 @@ pub fn union_polys(items: Vec<(u32, Poly)>, objects: &Objects, limit: usize) -> 
         }
         groups.entry(o).or_default().push(p);
     }
-    if order.len() == 1 {
-        return Ok(groups.remove(&order[0]).unwrap());
-    }
     let mut trees = HashMap::new();
     for o in &order {
         trees.insert(*o, build_tree(groups[o].clone(), limit)?);
@@ -897,7 +923,11 @@ pub fn union_polys(items: Vec<(u32, Poly)>, objects: &Objects, limit: usize) -> 
         for p in &groups[o] {
             let mut pieces = vec![p.clone()];
             for (qi, q) in order.iter().enumerate() {
-                if qi == oi || pieces.is_empty() {
+                // its own object too: a mesh that runs through itself (a ledge's drop face going
+                // on down inside the cliff beyond it) leaves faces inside its own solid, whose
+                // planes a box corner sunk into the slope leaves the solid through, pushed further in
+                let _ = (qi, oi);
+                if pieces.is_empty() {
                     continue;
                 }
                 let mut cut = vec![];
@@ -962,9 +992,9 @@ pub fn box_caps(polys: &[Poly], objects: &Objects, lo: V3, hi: V3, limit: usize)
 /// A solid-leaf tree of an open surface depends on the polygons' order (the
 /// first is the splitter): a cliff's face picked early can cut through the
 /// plateau above it and leave it empty. The tree of a few orders (the
-/// source's, walls first, floors first, the largest first) that agrees best
-/// with [`Objects::inside`] on a 6 x 6 x 6 raster of the cell (the first
-/// that agrees everywhere wins).
+/// source's, walls first, floors first, the largest first, the smallest first, a few fixed
+/// shuffles) that agrees best with [`Objects::inside`] on a 6 x 6 x 6 raster of the cell and
+/// half a unit either side of each polygon (the first that agrees everywhere wins).
 fn best_tree(polys: Vec<Poly>, objects: &Objects, lo: V3, hi: V3, limit: usize) -> Result<Vec<Node>> {
     const N: usize = 6;
     let pts: Vec<V3> = (0..N * N * N)
@@ -973,17 +1003,42 @@ fn best_tree(polys: Vec<Poly>, objects: &Objects, lo: V3, hi: V3, limit: usize) 
             [f(0, i % N), f(1, i / N % N), f(2, i / (N * N))]
         })
         .collect();
+    // and points half a unit either side of each polygon (where a car meets it), inside the cell
+    let mut pts = pts;
+    for p in &polys {
+        let k = p.verts.len() as f64;
+        let c: V3 = std::array::from_fn(|j| p.verts.iter().map(|v| v[j]).sum::<f64>() / k);
+        for s in [0.5, -0.5] {
+            let q = [c[0] + p.plane[0] * s, c[1] + p.plane[1] * s, c[2] + p.plane[2] * s];
+            if (0..3).all(|j| q[j] > lo[j] && q[j] < hi[j]) {
+                pts.push(q);
+            }
+        }
+    }
     let truth: Vec<bool> = pts.iter().map(|p| objects.inside_any(*p)).collect();
     let score = |t: &[Node]| pts.iter().zip(&truth).filter(|(p, &s)| !t.is_empty() && inside(t, **p) == s || t.is_empty() && !s).count();
     let mut best = build_tree(polys.clone(), limit)?;
     let mut best_score = score(&best);
-    let keys: [fn(&Poly) -> f64; 3] = [|p| p.plane[1].abs(), |p| -p.plane[1].abs(), |p| -area(&p.verts)];
-    for key in keys {
+    let keys: [fn(&Poly) -> f64; 5] =
+        [|p| p.plane[1].abs(), |p| -p.plane[1].abs(), |p| -area(&p.verts), |p| area(&p.verts), |p| -p.plane[1]];
+    for (i, key) in keys.iter().map(Some).chain([None, None, None]).enumerate() {
         if best_score == pts.len() {
             break;
         }
         let mut v = polys.clone();
-        v.sort_by(|a, b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
+        match key {
+            Some(key) => v.sort_by(|a, b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal)),
+            // a few fixed shuffles
+            None => {
+                let mut seed = 0x9E3779B97F4A7C15u64 ^ i as u64;
+                for j in (1..v.len()).rev() {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    v.swap(j, (seed % (j as u64 + 1)) as usize);
+                }
+            }
+        }
         let t = build_tree(v, limit)?;
         let s = score(&t);
         if s > best_score {
@@ -1163,7 +1218,7 @@ pub fn volume_check(tris: &[ColTri], g: &Grid, n: usize) -> (usize, usize, usize
 }
 
 /// Walls hanging from the open edges of the floors (an up-facing triangle's edge no other
-/// triangle of its piece shares) down to `bottom`, facing away from the floor. Under a surface
+/// triangle of its piece shares, with open air past it) down to `bottom`, facing away from the floor. Under a surface
 /// counts as solid ([`Objects::inside`]), so a one-sided deck, a floor whose sides were never
 /// modelled, or the rim of an open terrain stands on solid down to the bottom: but only under
 /// its own footprint. Without them nothing in a cell marks where the footprint ends, and the
@@ -1171,7 +1226,7 @@ pub fn volume_check(tris: &[ColTri], g: &Grid, n: usize) -> (usize, usize, usize
 /// the wrong side (a deck's solid ran on under the open sky beside it). Two pieces meeting at
 /// a seam that was never welded hang two skirts back to back on one plane: they face each
 /// other and drop out (two solids touching). Collision only: not drawn, no crease edges.
-pub fn skirts(tris: &[ColTri], bottom: f64) -> Vec<ColTri> {
+pub fn skirts(tris: &[ColTri], bottom: f64, objects: &Objects) -> Vec<ColTri> {
     let ids = weld(tris, 1e-3);
     let mut count: HashMap<(u32, usize, usize), u32> = HashMap::new();
     for (t, v) in tris.iter().zip(&ids) {
@@ -1201,6 +1256,15 @@ pub fn skirts(tris: &[ColTri], bottom: f64) -> Vec<ColTri> {
             let mut out_n = [-e[2], 0.0, e[0]];
             if dot(out_n, sub(c, a)) > 0.0 {
                 out_n = [e[2], 0.0, -e[0]];
+            }
+            // only where it is open past the edge: an edge left unshared by a T-junction (a
+            // cliff's faces meeting the ground mid-edge) has solid past it, and a skirt there
+            // would be a wall buried in the mass, which a box corner sunk into the slope
+            // leaves through, pushed further in
+            let ln = len(out_n).max(1e-12);
+            let m = [(a[0] + b[0]) / 2.0 + out_n[0] / ln * 0.5, (a[1] + b[1]) / 2.0 - 0.5, (a[2] + b[2]) / 2.0 + out_n[2] / ln * 0.5];
+            if objects.inside_any(m) {
+                continue;
             }
             let mut q = [a, b, bd, ad];
             if let Some(p) = plane_of(&q) {
@@ -1286,7 +1350,10 @@ pub fn solidify_decks(tris: &[ColTri]) -> Vec<ColTri> {
         best
     };
     let mut out = tris.to_vec();
-    for (&obj, list) in &pieces {
+    let mut keys: Vec<u32> = pieces.keys().copied().collect();
+    keys.sort_unstable();
+    for obj in keys {
+        let list = &pieces[&obj];
         if !list.iter().all(|&i| up(&tris[i])) {
             continue;
         }
@@ -1328,4 +1395,166 @@ pub fn solidify_decks(tris: &[ColTri]) -> Vec<ColTri> {
         }
     }
     out
+}
+
+/// The game's ray against a cell's tree (`CollisionTerrain.c` RayHitsBSP2, in f32, the same
+/// branches): the hit's fraction of the segment, if any. Used to check that a tree gives no
+/// hits the point classification does not ([`ray_check`]).
+pub fn game_ray(tree: &[Node], s: [f32; 3], e: [f32; 3]) -> Option<f32> {
+    game_ray_hit(tree, s, e).map(|h| h.0)
+}
+
+/// [`game_ray`] with the node whose plane the game reports for the hit (the one crossed into the
+/// solid; for a ray starting in the solid, as the port does for a custom world, the nearest
+/// plane it is behind on its way down: `CollisionTerrain.c`).
+pub fn game_ray_hit(tree: &[Node], s: [f32; 3], e: [f32; 3]) -> Option<(f32, usize)> {
+    fn d(n: &Node, p: [f32; 3]) -> f32 {
+        n.plane[0] as f32 * p[0] + n.plane[1] as f32 * p[1] + n.plane[2] as f32 * p[2] + n.plane[3] as f32
+    }
+    fn nearest(t: &[Node], p: [f32; 3], fallback: usize) -> usize {
+        let (mut k, mut best, mut bd) = (0usize, fallback, -d(&t[fallback], p));
+        for _ in 0..0x10000 {
+            let dd = d(&t[k], p);
+            if dd >= 0.0 {
+                match t[k].front {
+                    Some(f) => k = f,
+                    None => break,
+                }
+            } else {
+                if -dd < bd {
+                    bd = -dd;
+                    best = k;
+                }
+                match t[k].back {
+                    Some(b) => k = b,
+                    None => break,
+                }
+            }
+        }
+        best
+    }
+    fn rec(t: &[Node], s: [f32; 3], e: [f32; 3], k: usize, depth: usize) -> Option<(f32, usize)> {
+        if depth > 4096 {
+            return None;
+        }
+        let n = &t[k];
+        let (d0, d1) = (d(n, s), d(n, e));
+        let lerp = |f: f32| -> [f32; 3] { [(e[0] - s[0]) * f + s[0], (e[1] - s[1]) * f + s[1], (e[2] - s[2]) * f + s[2]] };
+        if d0 == 0.0 && d1 == 0.0 {
+            return n.front.and_then(|f| rec(t, s, e, f, depth + 1));
+        }
+        if (d0 > 0.0 && d1 < 0.0) || (d0 < 0.0 && d1 > 0.0) {
+            let fr = if d0 != d1 { d0 / (d0 - d1) } else { 0.0 };
+            let mid = lerp(fr);
+            let (near, far) = if d0 > 0.0 { (n.front, n.back) } else { (n.back, n.front) };
+            match near {
+                Some(c) => {
+                    if let Some((h, m)) = rec(t, s, mid, c, depth + 1) {
+                        return Some((h * fr, m));
+                    }
+                }
+                None if d0 < 0.0 => return Some((fr, k)),
+                None => {}
+            }
+            return match far {
+                Some(c) => rec(t, mid, e, c, depth + 1).map(|(h, m)| {
+                    let tt = h * (1.0 - fr) + fr;
+                    if tt == fr {
+                        (fr, k)
+                    } else {
+                        (tt, m)
+                    }
+                }),
+                None if d0 > 0.0 => Some((fr, k)),
+                None => None,
+            };
+        }
+        if d0 > 0.0 || d1 > 0.0 {
+            return n.front.and_then(|f| rec(t, s, e, f, depth + 1));
+        }
+        match n.back {
+            Some(b) => rec(t, s, e, b, depth + 1),
+            None => Some((0.0, nearest(t, s, k))),
+        }
+    }
+    if tree.is_empty() {
+        None
+    } else {
+        rec(tree, s, e, 0, 0)
+    }
+}
+
+/// Short segments in the open just above the surfaces (where a car's box corners move: 0.5 to 8
+/// units over the ground, 1 to 4 long, any way), each wholly open by the point classification,
+/// fired with the game's ray at every cell they reach ([`game_ray`]; hits outside a cell's box
+/// dropped, as `RayHitsBSP` drops them): the segments, and those the game would see hit
+/// something (a phantom face: the car is struck by air).
+pub fn ray_check(g: &Grid, samples: usize) -> (usize, usize) {
+    let mut seed: u64 = 0x2545F4914F6CDD1D;
+    let mut rnd = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let (mut n, mut hits) = (0, 0);
+    let mut tries = 0;
+    while n < samples && tries < samples * 20 {
+        tries += 1;
+        let (x, z) = (g.lo[0] + rnd() * (g.hi[0] - g.lo[0]), g.lo[2] + rnd() * (g.hi[2] - g.lo[2]));
+        let Some(ground) = g.ground_below([x, g.hi[1] - 0.5, z], g.hi[1] - g.lo[1], 0.5) else { continue };
+        let s = [x, ground + 0.5 + rnd() * 7.5, z];
+        let (a, b) = (rnd() * std::f64::consts::TAU, (rnd() - 0.5) * 0.6);
+        let l = 1.0 + rnd() * 3.0;
+        let e = [s[0] + l * a.cos() * b.cos(), s[1] + l * b.sin(), s[2] + l * a.sin() * b.cos()];
+        if (0..=40).any(|i| {
+            let t = i as f64 / 40.0;
+            g.solid([s[0] + (e[0] - s[0]) * t, s[1] + (e[1] - s[1]) * t, s[2] + (e[2] - s[2]) * t])
+        }) {
+            continue;
+        }
+        n += 1;
+        let (sf, ef) = (s.map(|v| v as f32), e.map(|v| v as f32));
+        let hit = g.cells.iter().any(|c| {
+            let (lo, hi) = (c.lo.map(|v| v as f32), c.hi.map(|v| v as f32));
+            if (0..3).any(|k| sf[k].max(ef[k]) < lo[k] || sf[k].min(ef[k]) > hi[k]) {
+                return false;
+            }
+            game_ray(&c.tree, sf, ef).is_some_and(|t| {
+                let h: [f32; 3] = std::array::from_fn(|k| sf[k] + (ef[k] - sf[k]) * t);
+                (0..3).all(|k| h[k] >= lo[k] - 0.1 && h[k] <= hi[k] + 0.1)
+            })
+        });
+        hits += hit as usize;
+    }
+    (n, hits)
+}
+
+/// Nodes in all, and nodes whose plane is (within [`COPLANAR_COS`] and 0.01 at the node's own
+/// polygon's distance... approximated by the planes' distances) one of their ancestors' planes
+/// the same way round: each leaves a float-thin solid leaf behind it that the game's ray can hit
+/// anywhere along the plane in the cell ([`build_tree`]).
+pub fn sliver_nodes(g: &Grid) -> (usize, usize) {
+    let (mut all, mut sliver) = (0, 0);
+    for c in &g.cells {
+        let t = &c.tree;
+        all += t.len();
+        // ancestors by a walk from the root
+        let mut stack: Vec<(usize, Vec<usize>)> = if t.is_empty() { vec![] } else { vec![(0, vec![])] };
+        while let Some((k, anc)) = stack.pop() {
+            let p = t[k].plane;
+            if anc.iter().any(|&a| {
+                let q = t[a].plane;
+                p[0] * q[0] + p[1] * q[1] + p[2] * q[2] > COPLANAR_COS && (p[3] - q[3]).abs() < COPLANAR_DIST
+            }) {
+                sliver += 1;
+            }
+            let mut next = anc.clone();
+            next.push(k);
+            for ch in [t[k].front, t[k].back].into_iter().flatten() {
+                stack.push((ch, next.clone()));
+            }
+        }
+    }
+    (all, sliver)
 }

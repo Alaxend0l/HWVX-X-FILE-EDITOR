@@ -731,3 +731,106 @@ mod synthetic {
         assert!((g.ground_below([0.0, 50.0, 0.0], 100.0, 0.1).unwrap()).abs() < 0.2);
     }
 }
+
+/// A smooth test world for driving quality, finely triangulated as a modeller's terrain is: a
+/// 3,000-unit square of gently rolling ground (6 high, 400 long waves) in quads of 25, a long
+/// smooth hump (50 high, 600 long, in 30 strips) across the way, walls round the edge. All of it
+/// times `scale` (the car stays the same size, so the triangles get smaller or bigger under it);
+/// the start faces +z over the hump. Nothing in it should lift a car's nose: the pitch follows the
+/// ground.
+pub fn smooth(scale: f32) -> Source {
+    let s = scale;
+    let h = 1500.0 * s;
+    let q = 25.0 * s;
+    let wave = |x: f32, z: f32| 6.0 * s * (x / (400.0 * s) * std::f32::consts::TAU).sin() * (z / (400.0 * s) * std::f32::consts::TAU).sin();
+    let hump = |x: f32, z: f32| {
+        let (z0, z1) = (-300.0 * s, 300.0 * s);
+        if x.abs() <= 300.0 * s && z > z0 && z < z1 { 25.0 * s * (1.0 - ((z - z0) / (z1 - z0) * std::f32::consts::TAU).cos()) } else { 0.0 }
+    };
+    let y = |x: f32, z: f32| wave(x, z) + hump(x, z);
+    let n = (2.0 * h / q).round() as usize;
+    let mut ground = vec![];
+    for i in 0..n {
+        for j in 0..n {
+            let (x0, z0) = (-h + i as f32 * q, -h + j as f32 * q);
+            let (x1, z1) = (x0 + q, z0 + q);
+            ground.extend(quad(
+                [[x0, y(x0, z0), z0], [x0, y(x0, z1), z1], [x1, y(x1, z1), z1], [x1, y(x1, z0), z0]],
+                [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
+                [150, 160, 140],
+            ));
+        }
+    }
+    let t = 40.0 * s;
+    let top = 80.0 * s;
+    let mut wall = box_faces([-h, -20.0 * s, h - t], [h, top, h], [200, 120, 110]);
+    wall.extend(box_faces([-h, -20.0 * s, -h], [h, top, -h + t], [200, 120, 110]));
+    wall.extend(box_faces([-h, -20.0 * s, -h + t], [-h + t, top, h - t], [200, 120, 110]));
+    wall.extend(box_faces([h - t, -20.0 * s, -h + t], [h, top, h - t], [200, 120, 110]));
+    let col = |ts: &[Tri], object: u32| -> Vec<ColTri> { ts.iter().map(|t| ColTri { p: t.p.map(|v| v.map(|x| x as f64)), material: 0, object }).collect() };
+    let mut collision = col(&ground, 0);
+    collision.extend(col(&wall, 1));
+    // the ground in strips of geometry (a draw holds at most 21,845 triangles)
+    let mut meshes: Vec<Mesh> = ground
+        .chunks(20000)
+        .enumerate()
+        .map(|(k, c)| Mesh { name: format!("ground{k}"), parts: vec![Part { name: "ground".into(), texture: Some(DEMO_TEX_GROUND), tris: c.to_vec() }] })
+        .collect();
+    meshes.push(Mesh { name: "wall".into(), parts: vec![Part { name: "wall".into(), texture: Some(DEMO_TEX_WALL), tris: wall }] });
+    let sz = -1200.0 * s;
+    Source { meshes, collision, start: [0.0, y(0.0, sz) + 10.0, sz, 0.0] }
+}
+
+/// Fine meshes and small scales: the game's ray must see no faces in open air (a nearly
+/// coplanar polygon kept as a node of its own leaves a float-thin solid leaf the ray hits), and a
+/// mesh running through itself must leave no faces buried in its own solid.
+#[cfg(test)]
+mod fine_mesh_tests {
+    use super::*;
+
+    #[test]
+    fn smooth_world_at_small_scale_has_no_phantom_faces() {
+        for s in [0.33f32, 1.0] {
+            let src = smooth(s);
+            let g = terrain::build_grid(&src.collision, &terrain::Options::default()).unwrap();
+            let (n, hits) = terrain::ray_check(&g, 4000);
+            let (nodes, sliver) = terrain::sliver_nodes(&g);
+            eprintln!("smooth {s}: {hits} of {n} rays hit air, {sliver} of {nodes} nodes repeat a plane");
+            assert!(hits * 1000 <= n, "{hits} of {n} rays hit air at scale {s}");
+            assert!(sliver * 1000 <= nodes, "{sliver} of {nodes} nodes repeat an ancestor's plane");
+        }
+    }
+
+    /// A ledge whose drop face runs on down inside the cliff beyond it, all one welded mesh with a
+    /// T-junction at the cliff's foot.
+    #[test]
+    fn mesh_through_itself() {
+        let v = |x: f64, y: f64, z: f64| [x, y, z];
+        let tri = |a: [f64; 3], b: [f64; 3], c: [f64; 3]| ColTri { p: [a, b, c], material: 0, object: 0 };
+        let q = |a, b, c, d| vec![tri(a, b, c), tri(a, c, d)];
+        let mut t = vec![];
+        // ledge at 50 from z -300 to 20, its drop face at z 20 down to -100 (facing +z, into the cliff)
+        t.extend(q(v(-200.0, 50.0, -300.0), v(-200.0, 50.0, 20.0), v(200.0, 50.0, 20.0), v(200.0, 50.0, -300.0)));
+        t.extend(q(v(-200.0, 50.0, 20.0), v(-200.0, -100.0, 20.0), v(200.0, -100.0, 20.0), v(200.0, 50.0, 20.0)));
+        // the cliff: from the ledge at z 0 (T-junction: mid-edge) up to 150 at z 60, then a top
+        t.extend(q(v(-200.0, 50.0, 0.0), v(-200.0, 150.0, 60.0), v(200.0, 150.0, 60.0), v(200.0, 50.0, 0.0)));
+        t.extend(q(v(-200.0, 150.0, 60.0), v(-200.0, 150.0, 300.0), v(200.0, 150.0, 300.0), v(200.0, 150.0, 60.0)));
+        // fix windings so every face looks out (up, or towards -z for the slope)
+        for c in t.iter_mut() {
+            let p = terrain::plane_of(&c.p).unwrap();
+            let want = if p[1].abs() > 0.3 { p[1] > 0.0 } else { p[2] > 0.0 };
+            if !want {
+                c.p.swap(1, 2);
+            }
+        }
+        let g = terrain::build_grid(&t, &terrain::Options::default()).unwrap();
+        let (n, hits) = terrain::ray_check(&g, 3000);
+        assert_eq!(hits, 0, "{hits} of {n} rays hit air");
+        // under the slope, past the ledge's drop face: solid all the way (no buried face left)
+        for z in [5.0, 15.0, 25.0, 40.0] {
+            assert!(g.solid([0.0, 45.0, z]) && g.solid([0.0, -50.0, z]), "air inside at z {z}");
+        }
+        let (_, phantom, hole) = terrain::volume_check(&t, &g, 7);
+        assert_eq!((phantom, hole), (0, 0));
+    }
+}

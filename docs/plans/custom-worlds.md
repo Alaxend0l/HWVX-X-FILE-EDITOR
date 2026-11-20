@@ -269,7 +269,7 @@ fall-through.
 * **Polygon order.** An open surface's tree depends on the order (a cliff face picked early cut
   through the plateau above it): each cell tries the source order, walls first, floors first,
   largest first, and keeps the tree that best matches "under a surface" on a 6 x 6 x 6 raster.
-  98.86% → 99.03% (union) → 99.43% (pieces) → 99.84% (order). What is left is at the rim.
+  99.03% (union only) → 99.43% (pieces) → 99.84% (order). What is left is at the rim.
 * Untextured groups (`texture: null`, vertex colour only) draw fine; the base world's fog and
   far plane are dark and short for a big world (stage 7). The base level's teleporters,
   volumes, speakers, creatures and radar map are moved or dropped as §2 says; the radar map's
@@ -291,7 +291,7 @@ example of a car with a model of its own. Not built; what it would take:
 
 | part | where | Headline has |
 |---|---|---|
-| geometry | `CarAInfo.modelRef` → `MotionAnim`: `MotionPart`s (geometry + bone), a `Skeleton` of `AnimNode`s (quat + position), `KeyAnim`s (steering 0x48, three additive anims) | 26 meshes in one FBX, no skeleton: one bone each for the body, the wheels, and any part that moves |
+| geometry | `CarAInfo.modelRef` → `MotionAnim`: `MotionPart`s (geometry + bone), a `Skeleton` of `AnimNode`s (quat + position), `KeyAnim`s (steering 0x48, three additive anims) | 26 objects in one FBX, no skeleton: one bone each for the body, the wheels, and any part that moves |
 | breakable parts | `MotionAnim.0x38` `CarPartList`: parts with a damaged geometry and debris (`damagePercent` 75, `damageLevel` 20) | none (Roarcage cars do not shed parts): an empty list or the intact mesh twice |
 | wheels | `CarAInfo.wheels` (`CarTrailBone` 0x50 each: offset, widths, `restLength`, `springRate`, `damping`, `friction`, `maxFriction`, `handbrakeGrip`, `driveBlend`, driven/skids/dusts) plus a bone and geometry each | `wheel.tscn` (one model for four), positions FrontLeft (-0.42, 0.239, -0.683) ... BackRight (0.42, 0.239, 0.965) m |
 | collider | `CarAInfo.collider` (`CarACollider` 0x4C): type 0 box (min/max) or a hull, mass, `maxHealth`, `damageThreshold`, `inertiaScale`, gravity | `BoxShape3D` 1 x 0.55 x 2 m |

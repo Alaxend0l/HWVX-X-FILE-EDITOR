@@ -447,7 +447,10 @@ So a reference is:
 4. **Encoding-independent operations**: recipes act on decoded images and sample streams, field
    patches name struct fields (the pack structs are identical across releases), not offsets.
 5. **Release-only assets are explicit**: an id missing from the player's release is reported;
-   a mod can give a fallback or declare the releases it needs.
+   a mod can give a fallback or declare the releases it needs. What differs in practice for
+   the editor's mods (world select pictures, the PC's missing multi-player drag worlds, car and
+   weapon texture numbers, custom worlds' textures), checked with the three releases' data:
+   [`release-differences.md`](release-differences.md).
 6. **Mixed installs** resolve per file, as the loader does: each file's release picks the
    fingerprint to check.
 

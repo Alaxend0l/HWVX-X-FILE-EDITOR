@@ -163,6 +163,51 @@ against ffmpeg's output, run locally only (no data in CI).
 Stages 1-5 give PS2 movies with no new licence; 6-7 give PC movies with an optional LGPL
 library. Stages 2 and 6-7 are independent of 3-5.
 
+## Stage 7 as built: packaging FFmpeg (HWVX-SDL branch `ffmpeg-packaging`)
+
+`packaging/ffmpeg/build.sh TARGET WORKDIR PREFIX` (HWVX-SDL; details and the LGPL checklist
+item by item in its `packaging/README.md`, "FFmpeg"). FFmpeg **9.0.2** (newest point release
+of the newest branch; 9.1 appeared the day of this work), sha256
+`8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e`, signature checked
+against FFmpeg's release key, unmodified. LGPL v2.1+ only: `--disable-everything
+--disable-autodetect`, shared only, no programs; demuxers `bink,binka,mpegps,mpegvideo`
+(mpegps needs the raw `mpegvideo` demuxer to probe its video stream's codec), decoders
+`bink,binkaudio_dct,binkaudio_rdft,mpeg1video,mpeg2video,pcm_s16le,pcm_s16be,adpcm_psx`
+(the Bink video decoder is configured as `bink`, not `binkvideo`), parser `mpegvideo`,
+protocol `file`, `--disable-x86asm`. libavformat 63, libavcodec 63, libavutil 61 (bink.c's
+range is 60-63).
+
+| Package | Where | Added |
+|---------|-------|-------|
+| Windows `.zip` (was a bare `.exe`) | DLLs beside `hwvx.exe`, `licenses/FFmpeg/` | 3.8 MB unpacked, 1.6 MB zipped |
+| Linux `.tar.gz` (was a bare program) | `.so.N` beside `hwvx` | 2.7 MB, 1.1 MB in the tar.gz |
+| AppImage | `usr/lib` (run path `$ORIGIN/../lib`) | 1.0 MB |
+| macOS `.app` | `Contents/Frameworks`, linked from `Contents/Resources` (SDL's base path) | not measured |
+| Android | `lib/ABI/libav*.so` (unversioned), `assets/licenses/FFmpeg` | 6.0 MB (stored uncompressed) |
+| Flatpak | the 24.08 runtime's own FFmpeg 7.1 (`libavformat.so.61`, LGPL, has the Bink and MPEG-2 decoders) | 0 |
+
+Every package has `licenses/FFmpeg/` (COPYING.LGPLv2.1, FFmpeg's LICENSE.md, NOTICE.txt with
+version, source, sha256, configure line); every release gets `ffmpeg-9.0.2.tar.xz` and its
+`.asc` beside the packages and an FFmpeg paragraph at the top of its notes. swscale and
+swresample are built and shipped but bink.c doesn't load them (about half the size).
+
+Checked locally with the built libraries: `avcodec_license()` is "LGPL version 2.1 or
+later", the configuration has no gpl/version3/nonfree; all seven PC `.bik` and five PS2
+`.PSS` decode without an error (thqLogo.bik 241 video frames and 387840 samples at 48 kHz,
+THQLOGO.PSS 242 frames 720x480; about 2000 frames/s on one core without assembly); the
+game's lookup (folder + soname order on Linux, through the AppImage's run path, by full
+path on Windows under Wine); the Windows cross build (Ubuntu 24.04 MinGW-w64: no
+libgcc DLL after `-static-libgcc`), the Linux packages in an Ubuntu 22.04 container like CI,
+both Android ABIs with NDK r28c (16 KB pages, `libavformat.so` soname). The 24.08 runtime's
+FFmpeg was checked in the runtime (x86_64: loaded, LGPL, decoders present; aarch64: its
+configure string). Not checked: macOS (no Mac here), the APK on a device, CI itself.
+
+FFmpeg's `mpegps` demuxer does not see the PSS audio (`SShd` in private stream 1): the game
+still reads that stream itself (type 1 is s16le PCM; `pcm_s16le`/`adpcm_psx` are in the
+build if it wants FFmpeg to decode it). `org.freedesktop.Platform.codecs-extra` (25.08 on)
+is GPL (`--enable-gpl`) and is added to the library path when installed, so a move of the
+Flatpak to 25.08 should look at which FFmpeg the game then finds.
+
 ## Open questions
 
 * The PC `.bik` details (revision, size, audio) once a CD is imported.

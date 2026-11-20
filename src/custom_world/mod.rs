@@ -6,6 +6,7 @@
 //! texture pack, surfaces indices into its collision materials, and the game
 //! composes the world over a base level as it loads.
 
+pub mod gltf_in;
 pub mod terrain;
 
 use std::collections::BTreeMap;
@@ -365,12 +366,12 @@ pub fn demo() -> Source {
     ];
     // collision: the ground first (the first polygon of a cell is its first
     // splitter), then the ramp and the wall; material 0 everywhere
-    let col = |ts: &[Tri]| -> Vec<ColTri> {
-        ts.iter().map(|t| ColTri { p: t.p.map(|v| v.map(|x| x as f64)), material: 0 }).collect()
+    let col = |ts: &[Tri], object: u32| -> Vec<ColTri> {
+        ts.iter().map(|t| ColTri { p: t.p.map(|v| v.map(|x| x as f64)), material: 0, object }).collect()
     };
-    let mut collision = col(&ground);
-    collision.extend(col(&ramp));
-    collision.extend(col(&wall));
+    let mut collision = col(&ground, 0);
+    collision.extend(col(&ramp, 1));
+    collision.extend(col(&wall, 2));
     Source { meshes, collision, start: [0.0, 20.0, -1200.0, 0.0] }
 }
 
@@ -425,5 +426,112 @@ mod tests {
         assert!(!g.solid([150.0, 20.0, -250.0]));
         // creases: the ramp's and the wall's edges (the ground is flat)
         assert!(!b.grid.edges.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod gltf_tests {
+    use super::*;
+
+    /// The demo written as a plain glTF and read back through a project gives
+    /// the same archive as the demo built directly.
+    #[test]
+    fn demo_through_gltf() {
+        let src = demo();
+        let dir = std::env::temp_dir().join(format!("hwvx-world-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("demo.gltf"), serde_json::to_vec(&gltf_in::write_gltf(&src)).unwrap()).unwrap();
+        std::fs::write(dir.join("world.jsonc"), demo_project()).unwrap();
+        let p = gltf_in::Project::read(&dir.join("world.jsonc")).unwrap();
+        let (back, rep) = gltf_in::import(&p).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(back.meshes, src.meshes);
+        assert_eq!(rep.degenerate, 0);
+        assert_eq!(back.start, src.start);
+        let opt = terrain::Options::default();
+        assert_eq!(build(&back, &opt).unwrap().archive, build(&src, &opt).unwrap().archive);
+    }
+
+    /// Scale, turn and mirroring: a node scaled by -1 keeps its triangles
+    /// facing out (the winding is turned over).
+    #[test]
+    fn placement() {
+        let src = demo();
+        let mut gl = gltf_in::write_gltf(&src);
+        gl["nodes"][1]["scale"] = serde_json::json!([-1.0, 1.0, 1.0]);
+        let g = gltf_in::Gltf::parse(&serde_json::to_vec(&gl).unwrap(), None).unwrap();
+        let nodes = g.mesh_nodes(&|n| n == "wall");
+        assert_eq!(nodes.len(), 2);
+        let dir = std::env::temp_dir().join(format!("hwvx-world-test2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("demo.gltf"), serde_json::to_vec(&gl).unwrap()).unwrap();
+        std::fs::write(dir.join("world.jsonc"), "{ \"model\": \"demo.gltf\", \"scale\": 2, \"rotateY\": 90, \"leaveOut\": [\"wall\"], \"start\": [0, 10, -600, 0] }").unwrap();
+        let p = gltf_in::Project::read(&dir.join("world.jsonc")).unwrap();
+        let (back, _) = gltf_in::import(&p).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(back.meshes.len(), 2);
+        // rotateY 90 takes +z to +x; scale 2
+        let s = back.start;
+        assert!((s[0] - -1200.0).abs() < 1e-3 && (s[1] - 20.0).abs() < 1e-3 && s[2].abs() < 1e-3 && s[3] == 90.0, "{s:?}");
+        // the mirrored ramp's slope still faces up
+        let up = back.meshes[1].parts[0].tris.iter().filter(|t| normal(&t.p)[1] > 0.5).count();
+        assert_eq!(up, 2);
+    }
+}
+
+/// The project file of the demo's glTF (`hwvx-x world demo --gltf`): the
+/// sample a modder starts from.
+pub fn demo_project() -> String {
+    format!(
+        r#"// A custom world from a glTF (hwvx-x world build world.jsonc OUT; docs/plans/custom-worlds.md).
+// Positions are model units times "scale" (game units), turned "rotateY" degrees about the up axis.
+// Textures are indices into the base level's world texture pack (Joyride world1's w1_tex here),
+// surfaces indices into its collision materials; null: vertex colour only.
+{{
+  "id": "uid://hwvx-world-sample-ramp",
+  "name": "Sample Ramp",
+  "base": 0,
+  "model": "demo.gltf",
+  "scale": 1.0,
+  "rotateY": 0,
+  "leaveOut": [],
+  "renderOnly": [],
+  "collisionOnly": [],
+  "materials": {{
+    "ground": {{ "texture": {DEMO_TEX_GROUND}, "surface": 0 }},
+    "ramp": {{ "texture": {DEMO_TEX_RAMP}, "surface": 0 }},
+    "wall": {{ "texture": {DEMO_TEX_WALL}, "surface": 0 }}
+  }},
+  "start": [0, 20, -1200, 0]
+}}
+"#
+    )
+}
+
+#[cfg(test)]
+mod env_tests {
+    use super::*;
+
+    /// A real modeller's world, given by HWVX_TEST_LAVA_CAGE=<project .jsonc>
+    /// (the user's own level, never in the repository; skipped without it):
+    /// it imports and builds, its start has ground under it, and the built
+    /// collision matches its solid surfaces from above almost everywhere.
+    #[test]
+    fn lava_cage_from_env() {
+        let Ok(path) = std::env::var("HWVX_TEST_LAVA_CAGE") else {
+            eprintln!("HWVX_TEST_LAVA_CAGE not set: skipped");
+            return;
+        };
+        let p = gltf_in::Project::read(std::path::Path::new(&path)).unwrap();
+        let (src, rep) = gltf_in::import(&p).unwrap();
+        assert!(rep.nodes.len() > 1);
+        let b = build(&src, &terrain::Options::default()).unwrap();
+        let s = src.start.map(|x| x as f64);
+        assert!(!b.grid.solid([s[0], s[1], s[2]]), "the start is inside the solid");
+        assert!(b.grid.ground_below([s[0], s[1], s[2]], 1.0e5, 1.0).is_some(), "no ground under the start");
+        let (have, ok, bad) = terrain::surface_check(&src.collision, &b.grid, 200, 0.5);
+        let share = ok as f64 / have as f64;
+        eprintln!("surfaces: {ok} of {have} ({:.2}%), worst {:?}", 100.0 * share, bad.first());
+        assert!(share > 0.995, "{:.2}% of the surfaces match", 100.0 * share);
     }
 }

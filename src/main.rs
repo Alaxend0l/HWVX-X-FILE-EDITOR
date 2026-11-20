@@ -125,6 +125,13 @@ enum Cmd {
         #[arg(long)]
         world: PathBuf,
     },
+    /// Build a custom world (docs/plans/custom-worlds.md): an archive with one
+    /// hub quadrant pack and one collision pack, and the world.jsonc the game
+    /// reads (HWVX_WORLD=OUT/world.jsonc)
+    World {
+        #[command(subcommand)]
+        cmd: WorldCmd,
+    },
     /// Convert PS2-prototype audio packs (dialogue sound sequences) into an
     /// extracted GameCube audio archive: prototype packs pair with GameCube
     /// packs by TOC id, each pair swaps the sequence graph and rebuilds the
@@ -242,6 +249,15 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum WorldCmd {
+    /// The generated test world: a ground, a ramp and a wall (stage 1)
+    Demo {
+        /// Folder for world.xgc and world.jsonc
+        output: PathBuf,
+    },
+}
+
 fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(code) => code,
@@ -274,6 +290,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::PortCar { beta, into, id, donor, imports, view_offset, force } => cmd_port_car(&beta, &into, id, donor, &imports, view_offset, force),
         Cmd::PortWorld { beta, geo, col, tex, world } => cmd_port_world(&beta, &geo, &col, &tex, &world),
         Cmd::PortAudio { gc, beta } => cmd_port_audio(&gc, &beta),
+        Cmd::World { cmd } => cmd_world(cmd),
     }
 }
 
@@ -1165,4 +1182,25 @@ fn cmd_patch_exe(exe: &Path, revert: bool) -> Result<ExitCode> {
     fs::write(exe, &bytes).with_context(|| format!("writing {}", exe.display()))?;
     out!("{}: patched (cars 33-35 unlocked)", exe.display());
     Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_world(cmd: WorldCmd) -> Result<ExitCode> {
+    use hwvx_xfile::custom_world as cw;
+    match cmd {
+        WorldCmd::Demo { output } => {
+            let src = cw::demo();
+            let b = cw::build(&src, &cw::terrain::Options::default())?;
+            write_world(&output, &b, &cw::world_jsonc("uid://hwvx-world-demo", "Demo Ramp", 0, "world", b.geometries, src.start, "hwvx-x world demo: a generated test world (ground, ramp, wall) over Joyride's world1"))?;
+            out!("{}", b.report());
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn write_world(output: &Path, b: &hwvx_xfile::custom_world::Built, jsonc: &str) -> Result<()> {
+    fs::create_dir_all(output).with_context(|| format!("creating {}", output.display()))?;
+    fs::write(output.join("world.xgc"), &b.archive)?;
+    fs::write(output.join("world.jsonc"), jsonc)?;
+    out!("wrote {} and world.jsonc", output.join("world.xgc").display());
+    Ok(())
 }

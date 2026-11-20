@@ -118,3 +118,54 @@ Rust refuses the file as unreadable):
 * malformed tRNS chunks (Pillow ignores them, the png crate stops);
 * a WAV whose chunk runs past the RIFF size, odd glTF values (a string as an index): the Python
   stops with a traceback.
+
+## The disc ripper (disc)
+
+`xdlrs::disc` (`tools/xdlrs/src/disc`) reads Velocity X's game data from the disc a player owns,
+every release, read only and streaming (an image is never read whole, never written). It ports
+what the game already does in C: `src/port/disc.c` (GameCube images, the file table; NKit as a
+plain image) and `src/port/pcdisc.c` (the PC and PS2 disc imports: ISO 9660, `.cue`/`.bin` raw
+sectors, HWVX.cab's MSZIP). It reads a Dolphin `.gcz` too, which the game refuses.
+
+| path | kind | release | extracted as (what the launcher imports; plays as `--data OUT`) |
+|---|---|---|---|
+| GameCube `.iso`/`.gcm` (NKit too) | `gc-image` | `gc` | the disc's files/ (Dolphin's "Extract Entire Disc"), byte for byte |
+| Dolphin `.gcz` | `gcz` | `gc` | the same |
+| PS2 DVD `.iso` | `iso9660` | `ps2` (archive version 183), `ps2beta` (177/179) | `XPS/ENGLISH/...` with the disc's names |
+| PC CD `.iso`, `.cue`+`.bin` (MODE1/2352) | `iso9660` | `pc` | HWVX.cab's files flat, the seven movies under `FMV_/` |
+| the PC CD as a folder (mounted, copied) | `cd-folder` | `pc` | the same |
+| a folder of the files already (GC `files/` or above it, PC install, PS2 `XPS/ENGLISH` or `ENGLISH`) | `folder` | by its HW_share | copied as they are |
+
+```
+xdlrs disc info PATH... [--json]                    release, kind, game ID, NKit, file count, sizes
+xdlrs disc list PATH [--only PAT]                   size and path of each file, as extracted
+xdlrs disc extract PATH OUT [--only PAT[,PAT]] [-v] the files under OUT (NAME.part, renamed when complete)
+xdlrs disc read PATH NAME [-o OUT]                  one file to OUT or stdout
+```
+
+`--only`: `*` and `?`, without case; a pattern with `/` matches the path (`worlds_/*`), one
+without matches the name or the path (`HW_*.xgc`).
+
+Library (paths are `/`-separated, matched without case; a bare name finds the file anywhere):
+
+* `xdlrs::disc::find_archive(path, "HW_IPack") -> Result<(PathBuf, Vec<u8>), String>`: an archive
+  by name without extension, from a folder (searched a few levels down, as `cars::find_archive`)
+  or any release's image; the PathBuf is where it is (inside an image: IMAGE/its path).
+* `xdlrs::disc::read_file(path, "HW_share.xgc") -> Result<Vec<u8>, String>`.
+* `Disc::open(path)` -> `Disc { kind, release, game_id, title, nkit, archive_version, entries:
+  [Entry { path, size }], .. }`; `find(name)`, `find_archive(stem)`, `read(name)`,
+  `read_entry(&e)`, `copy(&e, &mut impl Write)` (a megabyte at a time),
+  `extract(out, &only, &mut |e| progress)`. Open once and keep the `Disc` to read several files
+  (a GameCube image's table or a cabinet's file list is read once).
+* `cars::release` (`xdlrs cars stats`) takes an image as well as a folder.
+
+Checked: unit tests on images built in the test (a GameCube image with a file table, its `.gcz`
+with stored and zlib blocks, NKit's mark, ISO 9660 in 2048- and 2352-byte sectors with a `.cue`,
+PS2 retail and prototype discs, the PC CD as image and folder with a cabinet whose MSZIP block
+reaches into the previous block's history, a stored folder, refusals: LZX, cabinet sets, other
+games, Wii, damaged blocks and names, a folder loop). `tests/disc_real.rs` (skipped without the
+data): the retail GameCube `.iso` and `.gcz` give the same 116 files, SHA-1 for SHA-1, as the
+extracted `files/`, and the car stats read from the image equal the folder's. `xdlrs disc
+extract` of either gave a tree `diff -r` finds identical (the `.iso` in 1.2 s, the `.gcz` in 3.9 s,
+release build). Not checked on real discs: the PC CD (its HWVX.cab) and the PS2 DVDs, none being
+on this machine; their code follows pcdisc.c, which has imported them.

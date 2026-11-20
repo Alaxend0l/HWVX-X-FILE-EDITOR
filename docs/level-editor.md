@@ -43,8 +43,16 @@ the game.
 
 ### Running it
 
-Start the editor and pick your game's folder, or from a terminal (macOS: the program is in
-`HWVX Editor.app/Contents/MacOS/`):
+Start the editor. The first time, it asks **where your copy of the game is**: the GameCube
+disc's extracted files (the folder with `HW_share.xgc`, or the `files/` folder Dolphin's
+**Extract Entire Disc** makes), a disc image (`.iso`, `.gcm`, `.gcz`), or the PC or PS2
+release's data. If the game's own launcher already plays one, the editor offers it: press
+**Use it**. Otherwise type the path or press **Folder…** or **Disc image…**, then **Use this**.
+The editor remembers the choice (`editor-data.txt` in its scratch folder); **File > Game data…**
+changes it, and it asks again if the folder is moved away.
+
+From a terminal (macOS: the program is in `HWVX Editor.app/Contents/MacOS/`), `--data` uses a
+folder for one run without asking:
 
 ```sh
 hwvx-browser --data /path/to/your/game/files
@@ -86,7 +94,8 @@ or copy one as a starting point.
 
 ### Opening a level
 
-In the left panel, pick the **Level** tab. Type the level's folder (the one with `level.jsonc`)
+**File > Open level…** chooses a level's folder (the one with `level.jsonc`). Or in the left
+panel, pick the **Level** tab, type the level's folder (the one with `level.jsonc`)
 under **Level project (its folder)** and press **Open** (or Enter), or press **…** to choose it
 with your system's folder chooser. The line below shows its name, mode and world, for example
 `Checkpoint Run · challenge · ch1_l2`.
@@ -97,7 +106,7 @@ level's own world on show.
 
 ### Starting a new level
 
-Open **New level…** in the Level tab:
+Open **File > New level…** (or **New level…** in the Level tab):
 
 1. **mode**: challenge, battle, drag, joyride or mission.
 2. **on**: one of that mode's retail worlds.
@@ -114,7 +123,17 @@ new Battle level starts with round rules (5 kills, 3 rounds, 2 minutes).
 
 ## 2. The screen
 
-From left to right:
+Along the top, the **menu bar**:
+
+| Menu | What's in it |
+|---|---|
+| **File** | New level…, Open level…, Save level (Ctrl+S; ⌘S on macOS), Save as mod…, Game data…, Quit |
+| **Edit** | Undo (Ctrl+Z), Redo (Ctrl+Shift+Z), Delete (the selected record or trigger) |
+| **View** | the left panel's tab (Packs, Worlds, Level), Raw nodes (in the Outline), Spin the camera |
+| **Tools** | Test drive (F5), Stop the test drive, Reload world (or pack), Screenshot of the 3D view, Restart the game |
+| **Help** | Editor guide (this page), About (the editor's version, the game's data, renderer and data folder) |
+
+Below it, from left to right:
 
 * **The left panel**, with three tabs:
   * **Packs**: the game's data packs (for browsing; not needed for levels).
@@ -519,7 +538,9 @@ reach the game. Check:
 * the game is built (`build/hwvx` in the same checkout as the browser), or pass `--game PATH`;
 * you run the browser from that checkout (it finds the game and the tools from there; another
   checkout's browser uses another build), or pass `--tools DIR` for the tools folder;
-* `--data` points at your game data folder.
+* the game data is right: **Choose the game data…** (or **File > Game data…**). When the game
+  finds no data in the folder chosen, the editor goes back to **Where is your copy of the
+  game?** by itself.
 
 The message under the heading says what went wrong; **Try again** retries.
 

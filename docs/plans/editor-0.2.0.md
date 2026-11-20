@@ -17,13 +17,10 @@ browser), the gizmo drag and patches beyond numbers, the level limits lifted, th
    colours). Understand before release.
 3. **The guide**: fold `tools/browser/docs-content-{tracks,music,sounds,retail}.md` and
    `docs-media.md` into `docs/level-editor.md` (section 9b and a Media section).
-4. **Custom worlds**: the phantom hits are fixed (merged 2026-11-20; the user: "collision has been
-   nearly flawless"). Left: the base level's moving and animated things still show in a custom
-   world (on Lava Cage over Monument City: the train, a spinning tire). `src/game/Port_World.c`
-   drops the base's volumes, speakers, creatures, radar map and moves its teleporters; it must also
-   drop (or hide) the base's animated instances, movers and paths (the train's track), keeping
-   only what the world asks for. Ship custom worlds marked experimental.
-
+4. ~~Custom worlds' base leftovers~~: **done** (merged 2026-11-20: nothing of the base level shows,
+   on all 51 bases; the user's train and tire were 3 movers). Ship custom worlds marked
+   experimental: a base's rules that need what was dropped can't be finished (a challenge base
+   has no checkpoints, drag no opponent, battle nobody to fight) until Joyride templates (5).
 5. **Joyride worlds as templates** (the user, 2026-11-20): missions, challenges, battles and drag
    races made on a Joyride level's world (open-ended, only 10 gears and a key), with "remove the
    gears and the key" in one step; New level and New track offer them (branch

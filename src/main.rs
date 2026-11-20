@@ -1287,6 +1287,8 @@ fn cmd_world_build(project: &Path, output: &Path, heightmap: bool, without: &str
     out!("tree nodes repeating an ancestor's plane (float-thin solid leaves): {ss} of {sn}");
     let (rn, rh) = cw::terrain::ray_check(&b.grid, 20000);
     out!("the game's ray through open space just over the surfaces: {rh} of {rn} short segments hit something ({:.2}%)", 100.0 * rh as f64 / rn.max(1) as f64);
+    let (wn, ww) = cw::terrain::surface_ray_check(&b.grid, 20000);
+    out!("the game's ray down through the surfaces: {ww} of {wn} meet a face looking away (a thin slab's far side, {:.2}%)", 100.0 * ww as f64 / wn.max(1) as f64);
     let (vn, vp, vh) = cw::terrain::volume_check(&src.collision, &b.grid, 7);
     let (fs, fp, fh) = cw::terrain::face_check(&src.collision, &b.grid).values().fold((0, 0, 0), |a, s| (a.0 + s.samples, a.1 + s.phantom, a.2 + s.hole));
     out!("solid where nothing is / open inside a solid: {:.2}% / {:.2}% of {vn} points in the cells, {:.2}% / {:.2}% of {fs} points a unit off the faces", 100.0 * vp as f64 / vn.max(1) as f64, 100.0 * vh as f64 / vn.max(1) as f64, 100.0 * fp as f64 / fs.max(1) as f64, 100.0 * fh as f64 / fs.max(1) as f64);

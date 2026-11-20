@@ -364,6 +364,29 @@ Drives into a cliff at either scale: before, the car ended inside the rock (8.5:
 now it climbs or turns away. The ramp demo now launches to y 85, where stage 1's first build did;
 the 106 measured since was a phantom kick at the lip.
 
+**A car stuck on a flat plain (branch `position-hud`).** The user's car sank and jammed on a wide
+flat plain (y 226.66 at 2.8333 units/m), which lay 0.14 above a row of squares' floor (226.52).
+The cell above held the plain and, closing its solid, a cap on its floor facing down: a slab 0.14
+thick. A box corner grazing down through the plain made a ray whose piece past the plain left the
+slab through that cap, and `RayHitsBSP2` reports where a piece that entered the solid leaves it:
+the cap, facing down. The car was pushed down into the plain, back up by the cell below, down
+again (`transmissionFlags` 0x10000 is the force-feedback collision flag, set on every hit).
+Retail cells are open below, so their trees never close a solid a hair under a surface.
+
+* Builder: each cell's tree now reaches 16 units past its square (`CELL_OVERLAP`: surfaces clipped
+  to the grown box, the caps on it): a ray that entered the solid ends inside it, the entry is
+  reported, and a hit out there is dropped (the game keeps the square's own box). And the grid is
+  shifted, per axis, by up to a square so the fewest flat faces lie within 2 units of a wall
+  (`shift_off_faces`).
+* Game (custom worlds): a piece of a ray that starts on a parent's plane inside the solid is
+  reported as at its start, so the parent reports its own plane (the entry), not the exit.
+* Check: `world build` fires grazing rays down through the surfaces from the cell a corner is in
+  and counts faces looking away from the ray. The user's world: 0.40% overall, 11% in the stuck
+  spot's cell; now 0.01% and 0. Driving the user's approach: the car sank to y 225.6 and jammed
+  with 77,948 down-facing contacts; with either fix it crosses at 228.5-228.7 with none.
+* Collision of the level grew to 1.2 MB (the overlap); the other checks stay clean (0.00% / 0.00%
+  inside cells, 99.98% from above).
+
 **For artists** (any world, no per-world settings): collision is built from the drawn meshes,
 each connected piece a solid; closed meshes are best, open-bottomed ones standing in the ground
 are fine; a floor with room under it may be one-sided (it becomes a slab); nodes named

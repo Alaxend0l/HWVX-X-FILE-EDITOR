@@ -526,6 +526,10 @@ pub fn build_grid(tris: &[ColTri], opt: &Options) -> Result<Grid> {
     let n: [usize; 3] = std::array::from_fn(|k| ((span[k] / target[k]).ceil() as usize).max(1));
     ensure!(n[0] * n[1] * n[2] <= 0x100000, "a collision grid of {} x {} x {} squares: too many", n[0], n[1], n[2]);
     let size: V3 = std::array::from_fn(|k| span[k] / n[k] as f64);
+    // the squares' walls kept off the flat faces: a face a hair inside a square, its solid cut
+    // off by the wall, is a slab as thin as that hair, and the game's ray reports a slab's far
+    // side (a plain 0.14 above a square's floor pushed cars down into it)
+    let (lo, n, hi) = shift_off_faces(tris, lo, n, size);
     let (nx, ny, nz) = (n[0], n[1], n[2]);
 
     // polygons per square, in source order, then the skirts
@@ -535,11 +539,11 @@ pub fn build_grid(tris: &[ColTri], opt: &Options) -> Result<Grid> {
     for t in tris.iter().chain(&skirts) {
         let Some(plane) = plane_of(&t.p) else { continue };
         let a: [usize; 3] = std::array::from_fn(|k| {
-            let m = t.p.iter().map(|p| p[k]).fold(f64::MAX, f64::min);
+            let m = t.p.iter().map(|p| p[k]).fold(f64::MAX, f64::min) - CELL_OVERLAP;
             (((m - lo[k]) / size[k]).floor().max(0.0) as usize).min(n[k] - 1)
         });
         let b: [usize; 3] = std::array::from_fn(|k| {
-            let m = t.p.iter().map(|p| p[k]).fold(f64::MIN, f64::max);
+            let m = t.p.iter().map(|p| p[k]).fold(f64::MIN, f64::max) + CELL_OVERLAP;
             (((m - lo[k]) / size[k]).floor().max(0.0) as usize).min(n[k] - 1)
         });
         for x in a[0]..=b[0] {
@@ -547,6 +551,7 @@ pub fn build_grid(tris: &[ColTri], opt: &Options) -> Result<Grid> {
                 for z in a[2]..=b[2] {
                     let clo = [lo[0] + size[0] * x as f64, lo[1] + size[1] * y as f64, lo[2] + size[2] * z as f64];
                     let chi = [clo[0] + size[0], clo[1] + size[1], clo[2] + size[2]];
+                    let (clo, chi) = (clo.map(|v| v - CELL_OVERLAP), chi.map(|v| v + CELL_OVERLAP));
                     let Some(piece) = clip_to_box(t.p.to_vec(), clo, chi) else { continue };
                     if piece.len() < 3 || thick(&piece) <= 1e-2 || faces_in(&piece, plane, clo, chi) {
                         continue;
@@ -592,7 +597,8 @@ pub fn build_grid(tris: &[ColTri], opt: &Options) -> Result<Grid> {
         let chi = [clo[0] + size[0], clo[1] + size[1], clo[2] + size[2]];
         let mut polys = union_polys(per.remove(&key).unwrap_or_default(), &objects, 0xFFFF)?;
         if opt.caps {
-            polys.extend(box_caps(&polys, &objects, clo, chi, 0xFFFF)?);
+            let (glo, ghi) = (clo.map(|v| v - CELL_OVERLAP), chi.map(|v| v + CELL_OVERLAP));
+            polys.extend(box_caps(&polys, &objects, glo, ghi, 0xFFFF)?);
         }
         let tree = best_tree(polys, &objects, clo, chi, 0xFFFF)?;
         if tree.is_empty() {
@@ -1557,4 +1563,118 @@ pub fn sliver_nodes(g: &Grid) -> (usize, usize) {
         }
     }
     (all, sliver)
+}
+
+/// How near (game units) a square's wall may come to a face lying along it.
+pub const WALL_CLEARANCE: f64 = 2.0;
+/// How far past its square a cell's tree reaches (surfaces clipped to the square grown by this,
+/// its caps on the grown box): past what a car's box corner moves in a frame (400 units a
+/// second). The game's ray reports where a piece of a ray that entered the solid leaves it again
+/// (`RayHitsBSP2`); closed at the square's own walls, that was the far side of the hair
+/// between a surface and a wall below it, facing away: a car on a plain a hair above a square's
+/// floor was pushed down into it. Reaching past, the solid holds to the ray's end, the entry is
+/// reported, and a hit out there is dropped (`RayHitsBSP` keeps the square's own box).
+pub const CELL_OVERLAP: f64 = 16.0;
+
+/// The grid shifted, per axis, by up to a square so that as little face area as can be lies
+/// within [`WALL_CLEARANCE`] of a wall across that axis (faces facing along the axis within
+/// 11 degrees: floors for y, walls for x and z), one square added to keep everything covered.
+pub fn shift_off_faces(tris: &[ColTri], lo: V3, n: [usize; 3], size: V3) -> (V3, [usize; 3], V3) {
+    let (mut lo, mut n) = (lo, n);
+    for k in 0..3 {
+        // (coordinate along k, area) of the faces facing along k
+        let faces: Vec<(f64, f64)> = tris
+            .iter()
+            .filter_map(|t| {
+                let pl = plane_of(&t.p)?;
+                (pl[k].abs() > 0.98).then(|| ((t.p[0][k] + t.p[1][k] + t.p[2][k]) / 3.0, area(&t.p)))
+            })
+            .collect();
+        if faces.is_empty() {
+            continue;
+        }
+        let cost = |o: f64| -> f64 {
+            faces
+                .iter()
+                .filter(|(c, _)| {
+                    let r = (c - (lo[k] - o)).rem_euclid(size[k]);
+                    r.min(size[k] - r) < WALL_CLEARANCE
+                })
+                .map(|(_, a)| a)
+                .sum()
+        };
+        let (mut best, mut best_cost) = (0.0, cost(0.0));
+        for i in 1..64 {
+            let o = size[k] * i as f64 / 64.0;
+            let c = cost(o);
+            if c < best_cost - 1e-9 {
+                best = o;
+                best_cost = c;
+            }
+        }
+        if best > 0.0 {
+            lo[k] -= best;
+            n[k] += 1;
+        }
+    }
+    let hi = std::array::from_fn(|k| lo[k] + size[k] * n[k] as f64);
+    (lo, n, hi)
+}
+
+/// Short rays grazing down through the surfaces (from a hair to half a unit over the ground to as
+/// far under it, 0.5 to 4 units along it, like a moving car's box corners), fired with the game's ray as the
+/// retail game walks it ([`game_ray_hit`]): the rays, and those whose reported face looks away
+/// from the ray (the far side of a thin slab: the game pushes the corner the wrong way, into
+/// the ground). A slab is a face a hair above a square's wall, the solid below cut off by it.
+pub fn surface_ray_check(g: &Grid, samples: usize) -> (usize, usize) {
+    surface_ray_check_in(g, samples, g.lo, g.hi)
+}
+
+/// [`surface_ray_check`] with the rays' starts in a box (x, z of `lo`..`hi`).
+pub fn surface_ray_check_in(g: &Grid, samples: usize, blo: V3, bhi: V3) -> (usize, usize) {
+    let mut seed: u64 = 0x9E3779B97F4A7C15;
+    let mut rnd = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let (mut n, mut wrong) = (0, 0);
+    let mut tries = 0;
+    while n < samples && tries < samples * 20 {
+        tries += 1;
+        let (x, z) = (blo[0] + rnd() * (bhi[0] - blo[0]), blo[2] + rnd() * (bhi[2] - blo[2]));
+        let Some(ground) = g.ground_below([x, g.hi[1] - 0.5, z], g.hi[1] - g.lo[1], 0.5) else { continue };
+        let a = rnd() * std::f64::consts::TAU;
+        let r = 0.5 + rnd() * 3.5;
+        let s = [x, ground + 0.02 + rnd() * 0.5, z];
+        let e = [x + r * a.cos(), ground - 0.02 - rnd() * 0.5, z + r * a.sin()];
+        if g.solid(s) || !g.solid(e) {
+            continue;
+        }
+        n += 1;
+        let (sf, ef) = (s.map(|v| v as f32), e.map(|v| v as f32));
+        let dir = [ef[0] - sf[0], ef[1] - sf[1], ef[2] - sf[2]];
+        let mut best: Option<(f32, [f64; 4])> = None;
+        for c in &g.cells {
+            let (lo, hi) = (c.lo.map(|v| v as f32), c.hi.map(|v| v as f32));
+            if (0..3).any(|k| sf[k] < lo[k] || sf[k] > hi[k]) {
+                // the cell the corner is in: the game tests the cells the car's box reaches,
+                // which a corner just over a square's floor need not leave
+                continue;
+            }
+            if let Some((t, k)) = game_ray_hit(&c.tree, sf, ef) {
+                let h: [f32; 3] = std::array::from_fn(|j| sf[j] + dir[j] * t);
+                if (0..3).all(|j| h[j] >= lo[j] - 0.1 && h[j] <= hi[j] + 0.1) && best.is_none_or(|b| t < b.0) {
+                    best = Some((t, c.tree[k].plane));
+                }
+            }
+        }
+        if let Some((_, pl)) = best {
+            if pl[0] * dir[0] as f64 + pl[1] * dir[1] as f64 + pl[2] * dir[2] as f64 > 0.0 {
+                wrong += 1;
+            }
+        }
+    }
+    (n, wrong)
 }

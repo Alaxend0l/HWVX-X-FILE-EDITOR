@@ -41,8 +41,10 @@ browser), the gizmo drag and patches beyond numbers, the level limits lifted, th
 
 ## Open decisions
 
-- The builder's default scale for glTF worlds in metres: ~2.8 units a metre (Lava Cage felt right
-  at 2.8333) instead of 8.5? The plan (`custom-worlds.md`) still says 8.5.
+- The builder's default scale for glTF worlds in metres: undecided (Lava Cage felt right at 2.8333;
+  the plan still says 8.5). The user (2026-11-20): make it adjustable when creating the world: the
+  editor's "New world from a model" flow (after 0.2.0, custom-worlds.md stages 10-11) gets a scale
+  field with a car-sized reference in the preview, so it's judged by eye.
 - Custom worlds over world 3 and 5 bases on the PC (texture numbers differ): map them in the game.
 - Credits page: a named credit for the original game's developer and publisher (wording from the
   user), and whether to keep the HWVX-GC-Decomp line.

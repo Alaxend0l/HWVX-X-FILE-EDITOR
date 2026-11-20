@@ -159,8 +159,8 @@ Below it, from left to right:
   rules (section 6).
 * **Your level's own things**: **Triggers**, **Volumes**, **Starts**, **Items**, **Effect points**,
   **Timers**, **Variables**, **Texts**, **Objectives**, each with how many there are.
-* **The base world**: the world's own records you can change: **Starts (tile cars)**, **Airbox
-  volumes** (the sphere ones), **Items**, **Effect points**, **Timers**, **Variables**,
+* **The base world**: the world's own records you can change: **Starts (tile cars)**,
+  **Volumes** (spheres and boxes), **Items**, **Effect points**, **Timers**, **Variables**,
   **Objectives**. Ones you changed say "(patched)".
 
 **Filter** narrows every list. Anything with a problem is marked ⚠ in red.
@@ -223,6 +223,12 @@ nothing selected it says "Select something in the Level tab's lists, or click it
 * **To the ground** (inspector) drops the selection straight down onto the collision. For a
   start, it seats the car on the ground (section 5).
 * Or type the numbers in the inspector (`pos/x`, `center x`...).
+
+**Base box volumes.** A box (BSP) volume of the base world is drawn as its box when selected
+and moves like a sphere. The game never reads such a volume's `center`, so a level moves the
+box by patching it: the patched center is how far the box moves (retail's box volumes have a
+center of 0, 0, 0). The inspector's `center` shows that offset, not the box's middle. A few
+retail box volumes have no closed box (14 of 717 in the GameCube worlds); they aren't listed.
 
 The x/y/z gizmo shows the axes; you can't drag it (see Limits).
 
@@ -312,7 +318,7 @@ looks. They need the level's world loaded ("(load the level's world to place thi
 | **Sphere volume, here** | a 30-unit airbox sphere a little above the ground |
 | **Box volume (BSP), here** | a 40 × 25 × 40 box volume on the ground (size it in the inspector) |
 | **Start, here** | a car start facing away from the camera; port 0 (an AI car). Set **port** 1–4 for a player's start |
-| **Item, here** | a pickup (item 0 of the world's item pack) in the quadrant it's in |
+| **Item, here** | a pickup (item 0 of the world's item pack) in the quadrant it's in (a copy of that quadrant's first pickup, or another quadrant's if it has none) |
 | **Effect point, here (a copy of the selected one)** | a copy of the base effect point you selected first (its emitter, its glow) |
 
 Not placed: **Timer** (60 s, counting down), **Variable** (0), **Text**, **Objective**, and
@@ -323,17 +329,16 @@ If there is no ground under the camera, the editor says "no ground under the cam
 camera over the track and try again.
 
 A volume's inspector also has its **type**'s settings: force box (force, one shot, cars only),
-reverb, fog (near, far, colour), light, creature (rescue).
+reverb, fog (near, far, colour), light, creature (rescue). The game finds force boxes, fog,
+reverb, light and creature volumes through the world's volume grid; your volumes are added to
+it when the level loads, so they work like the base world's.
 
 ### The quadrant rule (items and effect points)
 
 The world is split into quadrants that stream in and out. Items and effect points belong to a
-quadrant, which the editor finds for you as you place and move them. Two rules:
-
-* It must be in a quadrant: "that place is in no quadrant: move it onto the track".
-* That quadrant must already have some items (for an item) or effect points (for an effect
-  point). A quadrant with none is refused when the level is built (the error names it). Turn on
-  the **objects** and **spawns** overlays to see where the world's own are.
+quadrant, which the editor finds for you as you place and move them. It must be in a quadrant:
+"that place is in no quadrant: move it onto the track". Any quadrant will do: one without items
+or effect points of its own gets a list of them when the level loads.
 
 ### Delete
 
@@ -541,16 +546,19 @@ new pickups (docs/plans/pickups-and-briefings.md).
 
 ## 10. Limits and known issues
 
-* **New volumes of types other than airbox** (force, fog, reverb, light, creature) aren't yet in
-  the world's volume grid, so only airbox triggers find them. A warning says so.
-* **Items and effect points** can only go into quadrants that already have some (section 4).
 * **The intro screen's text** is the base level's; your level's text shows as the objective
   line (pause, win and lose screens).
 * **The axis gizmo can't be dragged.** Move with Ctrl/Cmd + drag over the ground, or type the
   numbers.
 * **The live preview** shows your volumes, timers, variables, texts and patches; your own starts,
   items, effect points and objectives are drawn as marks but only take effect in a test drive (and in the shared level).
-* **Base volumes**: only the sphere airboxes are listed and movable (box volumes aren't).
+* **Base volumes**: box volumes without a closed box (a few) aren't listed; a box volume
+  another one shares its shape with can't be moved (the test drive's build says so; none in the
+  GameCube data).
+* **Shared levels: light and creature volumes of your own** work through the volume grid (a
+  thing inside one is lit, a car inside a rescue zone counts), but a light volume's world-wide
+  part (directional and ambient lights) and creature spawning read the world's own volume list,
+  which only the test drive's built world has your volumes in.
 * **Patches** change number fields only.
 * **Trigger limits**: the game allows only so many active triggers of each type (your level's
   plus the base ones kept). Going over is a check error; drop base triggers you don't need.

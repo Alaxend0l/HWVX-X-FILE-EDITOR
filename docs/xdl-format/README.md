@@ -1518,8 +1518,8 @@ Where it belongs: docs/xdl-format/README.md §10.6 (after §10.6.2 "Test drive":
    osascript on macOS, PowerShell on Windows, zenity on Linux). The tab lists, under the test
    drive's controls, **Level settings**, the level's **Triggers**, its own **Volumes**, **Timers**,
    **Variables** and **Texts**, and, once the level's world is loaded (**Load its world**, or the
-   Worlds tab), **the base world**: starts (tile cars), sphere airbox volumes, items, timers,
-   variables, objectives. A filter narrows every list. A record with a problem is marked ⚠.
+   Worlds tab), **the base world**: starts (tile cars), volumes (spheres, and BSP boxes: the
+   viewer's `records` gives their box), items, timers, variables, objectives. A filter narrows every list. A record with a problem is marked ⚠.
 2. **Select** from a list, or click in the 3D view: the base world's objects (the viewer's
    `pick`: tile cars, airboxes, items, effect points, instances) and the level's own volumes (the
    same ray against their spheres; the nearer wins). The selection is drawn yellow in the world
@@ -1572,7 +1572,8 @@ src/port/viewer_level.c. All need a world on show (`world`), else an error.
 | `records` | `table`: tileCars, volumes, timers, variables, objectives, teleporters, tilePaths, tileCreatures, quads, items, fxPoints, instances | `records`: `{path, ...}` in table order: tile cars `pos, rotY, port`; volumes `shape, type, enabled` (spheres: `pos, radius`); items `pos, id`; fx points, instances, creatures `pos`; teleporters `pos`; timers `time, type, countUp`; variables `value, id`. `path` is the structural path (World/0/tileCars/0, World/0/quads/16/contents/items/2; timers and variables name the table entry, `/to` the record) |
 | `record` | `path` (as above, also World/0, World/0/gameData, .../quads/N/contents, timers/N/to) | `path`, `struct`, `at` (@hex in the world pack), `fields` (decoded by the schema, as `get` decodes a typed node). Live: after `level` the patched values |
 | `marks` | `marks`: `[{kind: sphere\|arrow\|cross\|line, pos, to (line), radius, rotY (arrow; forward sin, 0, cos), color [r, g, b]}]` (at most 256) | `marks`: how many. Drawn over the world every frame (dimmed through what hides them), until replaced; `[]` clears |
-| `pick` (add) | | in a world also `path` (the record's structural path), `t`, and the ray: `origin`, `dir`; sphere airbox volumes are picked too (`kind: volume`) |
+| `pick` (add) | | in a world also `path` (the record's structural path), `t`, and the ray: `origin`, `dir`; airbox volumes are picked too (`kind: volume`; a BSP one by the sphere around its box) |
+| `records` (add) | | a BSP volume's entry: `center` (the field; the game reads it for spheres only), and when its planes close a box (Port_LevelBspBounds: each inside leaf's cell, from its planes' corners, or narrowing a box for cells of more than 24 planes; leaves that repeat their node's plane, give or take rounding, are slivers, left out) `min`, `max` and `pos` (its middle). 703 of the 717 BSP volumes of the GameCube worlds have one |
 
 The level's own volumes are drawn magenta while a level is applied and `overlay` is on.
 
@@ -1694,12 +1695,51 @@ edit about 2 s (the build 1.6 s, the game 0.4 s), unchanged 0.4-0.5 s to driving
   base volume decodes its settings (`volumeData`).
 * Everything is undoable (adding, deleting, a kind changed).
 
-## Not yet
+## Since: the volume grid, any quadrant, base box volumes moved
 
-* New volumes of types other than airbox aren't in the world's volume grid (VolumeHolder): only
-  the airbox triggers find a volume without it (a warning says so). Adding them to the grid's
-  cells is next.
-* An item or effect point in a quadrant that has none yet (a new items table) is refused.
+* **The volume grid.** The game finds force boxes, reverb, fog, camera, light and creature
+  volumes only through the world's volume grid (VolumeHolder: per cell, per type, a list).
+  Port_Level.c adds a level's own volumes to it: each cell its bounds touch (a sphere's box, a
+  BSP's box; cell 0, the one outside the grid, when they reach out of it) gets a copy of its list
+  for the type with the volume at the end (base volumes still come first), the cell patched
+  (undone with the level). In memory: the level's volume parts as the level applies. In the
+  level's own world pack: the volumes the builder appends are marked, their center's w (padding
+  the game never reads) "LVL1" (0x4C564C31, 56176836.0f; no retail volume has it), and the port
+  adds the marked ones as the world loads. Retail's own volumes the grid leaves out stay out:
+  most worlds have 1-3 of other types than airbox, Challenge 3's world 148 (the sweep,
+  `HWVX_LEVEL_SWEEP=1`, logs them per world). The compiler's warning is gone.
+  `tools/level_volume_test.sh BUILD DATA OUT`: thick red fog around the start
+  (`tools/level-tests/fog-start`), in memory and as a built pack: the volume in the grid, the
+  frames red (`xdlrs frame mean`); without the grid, the world's own colours.
+  Still: in memory a level's volumes aren't in the World's volume array, which creature spawning
+  and a light volume's world-wide part (directional, ambient) read; the built pack's are.
+* **Any quadrant.** An item or effect point may go into a quadrant without any: in memory an
+  append to a quadrant's null array of no elements is let through (the record checked as one of
+  the world's QuadContents and the field as its items/fxPoints) and the port allocates the array;
+  an item is a copy of the quadrant's first pickup, else of another quadrant's first. The pack
+  builder writes a new array record (the elements encoded from a base element's JSON with the
+  level's fields; a raw record with anchors, aligned 32) and points the quadrant's contents at it
+  (`xdl_level_pack.py` the same). A quadrant without a QuadContents at all would still be
+  refused (none in Challenge 1's world). `tools/level_items_test.sh`: three pickups in the
+  world quadrant (no items, no effect points), an item and an effect point in quadrant 5
+  (`tools/level-tests/item-new-quad`), both ways: applied, a pickup picked up wins.
+* **Base box volumes moved.** A BSP volume's center isn't read by the game (retail's are 0), so
+  a level moves a base BSP volume by patching its center: the patched center minus the old is
+  the move. In memory the port copies the BSP (BSPN0 nodes hold no pointers: as far as they
+  reach), moves each plane (d - n.delta) and points the volume at the copy; a moved base volume
+  of a type the grid lists is added to the cells where it is now. The pack builder moves the
+  planes in the BSP record's bytes (refused for a BSP two volumes share) and marks the volume
+  as above. The editor lists base box volumes with their box (drawn when selected), places one
+  at its box's middle plus the patched center less the reported one, and writes a move as that
+  center. Port_Swap.c now swaps every BSP volume's shape of the World's array as BSPN0 nodes; it
+  found them only by pointers (triggers, grid cells) before, so an unreferenced one's
+  type/next bytes were swapped as a word and its tree read wrong. `tools/level_movebox_test.sh`:
+  airbox volume 2 (a box off the road) moved across the road ahead of the start
+  (`tools/level-tests/move-box`), both ways: driving into it wins; `cargo test --test
+  level_edit base_box_volume_moves` (HWVX_DATA): every box volume's box, a move by a patch, the
+  box and the editor's place where they should be, taken out again.
+
+## Not yet
 * The editor's live preview shows the level's own records (marks) and what the in-memory path
   applies (patches, volumes, timers, variables, texts, triggers); starts, items, effect points
   and objectives take effect in the built pack (the test drive).

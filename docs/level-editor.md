@@ -56,10 +56,15 @@ release's data. If the game's own launcher already plays one, the editor offers 
 The editor remembers the choice (`editor-data.txt` in its scratch folder); **File > Game data…**
 changes it, and it asks again if the folder is moved away.
 
-The disc images it takes are the GameCube's. For the PC CD or the PS2 DVD, choose the folder
-the game's launcher imported the disc to, or rip the disc into a folder first with HWVX-SDL's
-`xdlrs disc extract DISC OUT` (`.iso`, `.cue`/`.bin` or a mounted CD; `xdlrs disc info DISC`
-says which release it is; docs/xdl-format/xdlrs.md, "The disc ripper"). The editor works with
+**A disc image** (`.iso`, `.gcm`, `.gcz`, the PC CD's `.cue`/`.bin`, or a folder holding the PC
+CD's `HWVX.cab`): the screen shows what the disc is and offers **Extract it…**. A GameCube
+`.iso`/`.gcm` can also be used as it is (**Use it directly**); the PC and PS2 discs, and `.gcz`, must
+be extracted. **File > Extract a disc…** does the same at any time. The **Extract a disc** window
+shows the release, its files and size, and a folder to extract into (by default `game-data/<release>`
+beside the editor's scratch folder; an empty folder, or an earlier extraction of the same disc, which
+it finishes). It checks the free space first, extracts with a progress bar (**Cancel** stops after
+the file in progress), then **Use this as the game data**. Your PC and PS2 discs take a few seconds.
+From a terminal: `xdlrs disc extract DISC OUT` (docs/xdl-format/xdlrs.md, "The disc ripper"). The editor works with
 every release's data. Where the releases differ, it says so (section 10).
 
 From a terminal (macOS: the program is in `HWVX Editor.app/Contents/MacOS/`), `--data` uses a

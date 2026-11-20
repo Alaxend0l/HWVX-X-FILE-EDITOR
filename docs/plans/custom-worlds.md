@@ -371,6 +371,43 @@ are fine; a floor with room under it may be one-sided (it becomes a slab); nodes
 solid and not drawn, `collisionOnly` / `renderOnly` name patterns in the project do the same.
 A separate collision model beside the render one is not read yet.
 
+**Nothing of the base level left (branch `world-base-clean`).** Lava Cage over track 0 still
+showed Monument City's train and a spinning tire: the world pack's tile paths (movers) spawn at
+the start whatever the quadrants hold. `Port_WorldLoaded` now drops by kind, for any base (no
+names): movers (`numTilePaths` 0), AI spawns (tile cars of ports other than 1-4: `dynamic` 1,
+`mode` 0, so neither the start, an action nor `AI_CarA`'s near-a-camera spawner brings them),
+the nav graph (`numNodes` 0), volumes (`numVolumes` 0 too: fog, reverb, force, light), tile
+lights, vertex colour lights, the weather emitter kept ahead of the camera (`cameraFx`),
+teleporters' effects; and from the level's TAC triggers (before the refresh activates them)
+every trigger whose test or a condition is on the base's places (airboxes, destructibles,
+items, movers, creatures) and every action on them (airbox, destructible, fx point, item,
+mover, nav point, speaker, vertex colour, script light, teleport, AI path, sound sequence,
+creature, the target arrow, a camera sent anywhere but behind the player, a placed item given);
+lists of tile cars lose the dropped AI cars. The players' cars start side by side (16 apart)
+across the start. Kept: the level's rules (timers, variables, objectives, interfaces, music,
+the end of the level, battle rounds), chase cameras, fog, the item pack, surfaces. **Sky**: the
+base's sky is in its hub quadrant with its level geometry and is not drawn (black above the
+fog): a world brings its own (decision for the user). The log has a `world: from the base level:`
+line with the counts per kind and the triggers and actions dropped by type; `HWVX_THINGLOG=N`
+logs the things alive by type every N frames (any level). `tools/world_drive.sh` takes `MODE=`.
+
+| base (custom world over it) | things alive before (beyond the car) | after | dropped (examples) |
+|---|---|---|---|
+| 0, Joyride world1 (ramp, Lava Cage) | 3 movers (the train, the tire) | none | 3 movers, 813 volumes, 20 of 26 triggers, 1 camera action |
+| 19, first battle arena | 3 AI cars, weather emitter, debris, a mover-like physical | none | 3 AI spawns, 64 nav points, weather |
+| 39, Challenge 1 | 3 movers | none | 3 movers, 285 nav points, 18 of 26 triggers |
+| 5, first mission | 3 movers, 2 AI cars | none | 11 AI spawns, 324 nav points, 20 of 41 triggers, 14 actions |
+| 29, first drag race | 3 AI cars, debris | none | 3 AI spawns, 94 nav points, 16 of 29 triggers |
+
+All 51 bases (0-26, 29-34, 39-56) swept with the ramp sample: only the player's car and the
+camera's looker alive (one global sound sequence at 0,0,0 once on 32); the ramp drives the
+same over each (y 85 at the lip, never below 1). Track 10's script gave the car one of the
+base's placed items (`ActionVehicleGiveItem`, type 0) and crashed main's build; that action is
+dropped. Retail unchanged: the attract demo frame-identical, Joyride world1 and battle bat2_l9
+races (carlog and frames) identical to main's. PC and PS2 data: the same drops and drive.
+Not covered: a world's own volumes, AI, routes or music (none exist yet); a base's rules that
+need what went (a challenge's checkpoints, a drag race's opponent) cannot be completed.
+
 **Still open.** Surfaces are all material 0 (question 5); textures are base indices only
 (stage 6); a mod cannot ship the archive yet (stage 4); hub only, no streaming (stage 5).
 

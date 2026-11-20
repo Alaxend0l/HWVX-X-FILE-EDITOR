@@ -20,7 +20,8 @@ player's own copy of the world, and the game applies it when the level loads.
 7. Test drive
 8. Saving, undo and redo
 9. Sharing your level (packaging)
-9b. New cars and weapons (the Content tab)
+9b. The Content tab (new cars, weapons, tracks, sounds and music)
+9c. The Media tab (movies and the Audio browser)
 10. Limits and known issues
 11. Troubleshooting
 
@@ -39,6 +40,9 @@ player's own copy of the world, and the game applies it when the level loads.
   * **macOS:** open the `.dmg` and drag **HWVX Editor** to Applications.
   * **Linux:** make the `.AppImage` executable and run it.
 
+  The packages also hold FFmpeg, which the Media tab uses to play the PC's and the PS2's movies
+  (section 9c).
+
 The game's launcher has an **Editor** button that starts the editor when it is installed beside
 the game.
 
@@ -51,6 +55,12 @@ release's data. If the game's own launcher already plays one, the editor offers 
 **Use it**. Otherwise type the path or press **Folder…** or **Disc image…**, then **Use this**.
 The editor remembers the choice (`editor-data.txt` in its scratch folder); **File > Game data…**
 changes it, and it asks again if the folder is moved away.
+
+The disc images it takes are the GameCube's. For the PC CD or the PS2 DVD, choose the folder
+the game's launcher imported the disc to, or rip the disc into a folder first with HWVX-SDL's
+`xdlrs disc extract DISC OUT` (`.iso`, `.cue`/`.bin` or a mounted CD; `xdlrs disc info DISC`
+says which release it is; docs/xdl-format/xdlrs.md, "The disc ripper"). The editor works with
+every release's data. Where the releases differ, it says so (section 10).
 
 From a terminal (macOS: the program is in `HWVX Editor.app/Contents/MacOS/`), `--data` uses a
 folder for one run without asking:
@@ -120,6 +130,9 @@ The editor writes a new folder (named after the level) with a `level.jsonc` and 
 own triggers kept (`base triggers: all`), so it plays like the original until you change it. A
 new Battle level starts with round rules (5 kills, 3 rounds, 2 minutes).
 
+<!-- Joyride worlds as templates for every mode: to be filled in from
+     HWVX-SDL tools/browser/docs-joyride-templates.md when that work is merged. -->
+
 ---
 
 ## 2. The screen
@@ -130,24 +143,29 @@ Along the top, the **menu bar**:
 |---|---|
 | **File** | New level…, Open level…, Save level (Ctrl+S; ⌘S on macOS), Save as mod…, Game data…, Quit |
 | **Edit** | Undo (Ctrl+Z), Redo (Ctrl+Shift+Z), Delete (the selected record or trigger) |
-| **View** | the left panel's tab (Packs, Worlds, Level), Raw nodes (in the Outline), Spin the camera |
+| **View** | the left panel's tab (Packs, Worlds, Level, Content, Media), Raw nodes (in the Outline), Spin the camera |
 | **Tools** | Test drive (F5), Stop the test drive, Reload world (or pack), Screenshot of the 3D view, Restart the game |
 | **Help** | Editor guide (this page), About (the editor's version, the game's data, renderer and data folder) |
 
 Below it, from left to right:
 
-* **The left panel**, with three tabs:
+* **The left panel**, with five tabs:
   * **Packs**: the game's data packs (for browsing; not needed for levels).
   * **Worlds**: every level of every mode. Double-click one to load its world. Below the list:
     **Orbit** / **Fly** (the camera), **Start** (go to player 1's start, also **G**), **Focus**
     (the camera on the selected object, also **F**), the **Overlays** and **Unload world**.
   * **Level**: your level: open, new, the test drive controls, **Live preview**, **+ Add**, a
     **Filter**, and the lists (below).
+  * **Content**: a mod of new cars, weapons and tracks, changes to the game's own cars and
+    weapons, sounds and music (section 9b).
+  * **Media**: the game's movies, and every sound and song in the data (section 9c).
 * **Outline**: the loaded pack's contents (Geometry, Triggers, Textures...). You don't need it
   for level editing.
-* **The 3D view** in the middle: the game itself drawing the world.
+* **The 3D view** in the middle: the game itself drawing the world. On the Media tab, tabs above
+  it switch between **3D view**, the open movie (**Movie: NAME**) and the **Audio browser**.
 * **The inspector** on the right: the selected thing's fields, with **↶ Undo**, **↷ Redo**,
-  **💾 Save** and **all fields** along its top.
+  **💾 Save** and **all fields** along its top. On the Content tab it shows the mod's selected
+  car, weapon, track, sound or song instead.
 * **The top bar**: the viewer's status, **Reconnect**, **▶ Test drive (F5)**, the loaded world,
   **Reload world**.
 * **The bottom bar**: camera buttons and **Screenshot**.
@@ -533,33 +551,223 @@ A test drive (F5) already runs your level exactly as players will get it: the le
 
 ---
 
-## 9b. New cars and weapons (the Content tab)
+## 9b. The Content tab (new cars, weapons, tracks, sounds and music)
 
-The **Content** tab (or **View > Content**) makes a **mod** of new cars and weapons built from the
-game's own: each one takes a base car or weapon (its model, sounds and scripts come from the
-player's copy) and changes its numbers and paint. A mod holds no game data.
+The **Content** tab (or **View > Content**) makes a **mod**: new cars, weapons and tracks built
+from the game's own, changes to the game's own cars and weapons, and sounds and music of your
+own. Everything in it builds on the player's copy of the game. A mod holds no game data: only
+your numbers, your own files (sounds, music, pictures) and your levels.
+
+### Opening a mod
 
 * **Open** a mod's folder (the one with `mod.jsonc`), or **New mod…**: a name, an author and the
   folder it goes in. The `night-shift` sample (`tools/mod-samples/night-shift`) is one to look at.
+* The left panel then lists the mod's parts, in this order: **Cars**, **Weapons**, **Retail
+  changes**, **Sounds**, **Soundtrack** and **Tracks**. Select one to edit it in the inspector.
+* **💾 Save** (Ctrl+S on this tab) writes `mod.jsonc`, keeping its comments. **● unsaved** by the
+  mod's name means there are changes to save.
+
+### New cars and weapons
+
 * **+ New car** / **+ New weapon**: pick what it's made from (cars by name; weapons as the item
   select numbers them, 0-11) and a name. It gets an id of its own (`uid://…`); the game gives it
   the next free number when the mod is on (the first new car is 33, the first weapon 12).
-* **The inspector** on the right: the name, what it's made from, **unlocked** (from the start),
-  and for a car its **Paint** (a hue shift and brightness on one of its textures, applied to the
-  player's own texture as it loads). Below, the **numbers** by part (a car's engine and gears,
-  handling, acceleration and brakes, stunts; a weapon's weapon and pickup values): tick a field
-  to set it for this car, untick it to go back to the base's value.
-* **▶ Drive it** (cars) / **▶ Try it** (weapons), or **F5** on this tab: saves, then starts the
-  game with the mod on, in a Challenge race in the car or a Battle with the weapon. **■ Stop** in
-  the top bar ends it.
-* **💾 Save** (Ctrl+S on this tab) writes `mod.jsonc`, keeping its comments. **Save as mod…**
-  packs it into an `.xmod` after the check for game data, as for levels (section 9).
+* **The inspector**: the name, what it's made from, **unlocked** (from the start), and for a car
+  its **Paint** (a hue shift and brightness on one of its textures, applied to the player's own
+  texture as it loads). Below, the **numbers** by part (a car's engine and gears, handling,
+  acceleration and brakes, stunts; a weapon's weapon and pickup values): tick a field to set it,
+  untick it to go back to the base's value. **🗑 Delete** takes the entry out.
+* A new car's model, sounds and scripts are its base car's. A new weapon is a copy of its own:
+  changing it leaves the weapon it was made from as it was.
 
-Mods made here install like any other (the game's launcher, Mods tab). New weapons are copies of
-their own: changing one leaves the weapon it was made from as it was.
+**A new car's sounds.** The car inspector's **Sounds** (under Paint) lists the sounds of the
+car's own pack, by what plays them: **wind (loop)**, **engine (loop, pitched by rpm)**, **rolling
+(loop, on a surface)**, **gear shift**, or **not played** (a sound set the game never reads).
+Each row has **▶** (the game's sound), its length, rate and **↻** if it loops. **Replace…** picks
+a WAV, FLAC, Ogg Vorbis or MP3 file and copies it into the mod's `sounds/` folder; the row then
+plays your file as the game will decode it, and **✕** drops it. A replacement here plays in this
+car only, never in the car it is made from. Horns, crashes, skids and pickups aren't in a car's
+pack: they are the shared sounds (**Sounds** below).
 
-Not yet: a car's own model (only a base car's, repainted), weapon names in the picker (numbers),
-new pickups (docs/plans/pickups-and-briefings.md).
+### Retail changes
+
+A balance or repaint mod: the game's own cars and weapons, changed wherever the game uses them,
+with no new entries. **Retail changes** lists the 33 retail cars by name and the 12 item-select
+weapons by number. A changed one is marked `● … (N changed)`, and the header counts them.
+
+Select one: the inspector is the same as a new car's or weapon's (paint for a car, the numbers
+by part, tick to change). **↺ Reset** drops every change the mod makes to it.
+
+* A change to a retail weapon doesn't reach a new weapon made from it, and the other way round.
+* A few car and weapon textures have other numbers on the PC or the PS2 (or aren't there). For
+  those, the paint is written for each release under its own number, and the inspector says how
+  the other releases number the texture, or that one hasn't it.
+
+### Sounds
+
+**Sounds** replaces any other sound of the game (the shared horns, crashes and skids, a
+weapon's, a world's...) for every car and level.
+
+* **+ Replace a sound**: pick an archive, a pack with sounds and one of its sounds (**▶** to hear
+  it, its name to pick it). It opens in the inspector.
+* **Replace…** picks your file (WAV, FLAC, Ogg Vorbis or MP3) and copies it into `sounds/`.
+  Every pack that loads the sound plays your file instead. The game mixes it to mono and plays it
+  at the sound's rate.
+* **▶ Drive with it**: a Challenge race with the mod on (in that car for a car's sound, else in
+  the mod's first new car, else car 0).
+* Files in `sounds/` that nothing uses any more are listed, with **remove**. Remove them, or they
+  go into the package.
+
+### Soundtrack
+
+**Soundtrack** replaces any of the game's 60 songs with music of your own. One file loops; several
+make a playlist.
+
+* **+ Replace a song** lists every song, grouped: Menus, Adventure, Challenge, Joyride, Drag race,
+  Battle and Multi-player drag (a filter field narrows it; **✔** marks the ones the mod has).
+  Pick one, then **Choose files…** (OGG, MP3, FLAC or WAV, several at once). The files are copied
+  into the mod's `music/` folder. You can also drop files on the window, type a path, or pick a
+  file already in the mod (**+ A file of the mod**).
+* **The inspector** shows the song's tracks in order: **⏶** **⏷** to reorder, **✖** to take one
+  off (the file stays in the folder). Each track shows its rate, channels and length, and has:
+  * **▶ Play**: the file as the game decodes it. **▶ Loop seam**: 3 s before the loop's end,
+    then 3 s from its start, twice, as the game loops it. **■ Stop**.
+  * **loops**: unticked, the track plays once, then silence.
+  * **loop start** / **loop end**: ticked, your own (in the file's frames); unticked, the file's
+    own loop tags (`LOOPSTART`, `LOOPEND`, `LOOPLENGTH`), else a `.loop.txt` beside it, else the
+    whole file. In a playlist each track plays to its **ends at**, then the next one follows.
+  * **intro**: a file of the mod played once before the track. **volume** 0-4 (1 is right for
+    music mastered at about -17 dB RMS).
+* **▶ Test in game** saves the mod and starts the game where the song plays: a level's song in
+  its race (the intro box is passed for you), the title screen's song (`music_1`) at the title,
+  the menus' song (`music_2`) in the main menu.
+* **▶ Base song** plays the game's own song, to compare.
+* **🗑 Keep the game's song**: the mod no longer replaces it (its files stay in `music/`).
+* Problems (a missing file, a loop that ends before it starts) list under the tracks. A file over
+  ten minutes is flagged: the game plays it, but **Save as mod** can't check it.
+
+### Tracks
+
+A mod can bring new tracks: new entries in a mode's world select, each a race of its own. One mod
+can hold several, a small championship.
+
+* **+ New track**: the mode (Adventure, Challenge, Joyride, Battle, Drag race), the retail track
+  it is made from (by its world select name and world, for example `40  Challenge 2 (ch1_l3)`),
+  a name, and **locked until the game unlocks it** or not. The game puts it after the mode's own
+  tracks in its world select.
+* **The inspector**: the name, what it's made from (its loading screen, win and lose sequences,
+  and its world), **unlocked**.
+* **Level**: none (the base track's own race), or a level project of yours (the Level tab's
+  folders): **Link a level project…**. **Compile** compiles it into the mod folder (**▶ Drive
+  it** and **Save as mod** do that by themselves); **Open in Level tab** edits it; **Unlink**
+  goes back to the base track's race. The link to your project's folder stays on your machine:
+  a shared mod never carries your folders.
+* **Picture in the world select**: **the game's** (a click picks one of the select's own
+  pictures, each named after the tracks that use it) or **your own**: **Choose image…** takes a
+  PNG of at most 1024 x 1024 and 4 MB and copies it into the mod's `images/`. The game draws it
+  at the base picture's size (256 x 256, shown stretched to about 5:3: a 5:3 PNG looks as
+  drawn). A new track starts with its base track's picture.
+* **▶ Drive it**: saves, compiles the track's level and starts its race.
+
+### Drive it, Try it
+
+Every part has a button that saves the mod and starts the game with it on, at the place to
+check it. **■ Stop** in the top bar ends it.
+
+| what | button | the game starts |
+|---|---|---|
+| a new or retail car | **▶ Drive it** (or **F5**) | a Challenge race in that car |
+| a new or retail weapon | **▶ Try it** (or **F5**) | a Battle with that weapon |
+| a sound | **▶ Drive with it** | a Challenge race in a car that plays it |
+| a song | **▶ Test in game** | where the song plays |
+| a track | **▶ Drive it** | the track's race |
+
+The game's log is `testdrive.log` in the editor's scratch folder.
+
+### Save as mod
+
+**Save as mod…** packs the mod into an `.xmod`, as for levels (section 9): it compiles the tracks'
+levels first, then checks that nothing in it is the game's (its sounds, music and pictures
+included: your own files pass, a copy of the game's is refused). Mods made here install like any
+other (the game's launcher, Mods page).
+
+### Custom worlds (experimental)
+
+A world of your own, made from your own model (glTF) and driven over a retail level's rules, is
+being built. It is not in the editor yet and can't go into a mod yet: today it is a command-line
+test. To try one with the programs in the editor's package (or a checkout):
+
+```sh
+hwvx-x world demo my-world        # a ground, a ramp and a wall: my-world/world.xgc and world.jsonc
+HWVX_WORLD=my-world/world.jsonc HWVX_START=race:mode=joyride,world=uid://hwvx-world-demo \
+  hwvx --data /path/to/your/game/files
+```
+
+`hwvx-x world demo my-world --gltf` also writes the demo as `demo.gltf` with its project file
+`demo.jsonc`: change them, or point one at your own model, and `hwvx-x world build
+my-world/demo.jsonc my-world` builds it (start it with `world=` the `"id"` in that file,
+`uid://hwvx-world-sample-ramp` for the demo's). Nothing of the base level shows (its objects, movers, AI
+cars, lights, weather); its rules, music and fog stay. The plan, and what works so far, is
+docs/plans/custom-worlds.md.
+
+---
+
+## 9c. The Media tab (movies and the Audio browser)
+
+The **Media** tab (or **View > Media**) plays the game's movies, and every sound and song in the
+data. It has two parts: **Movies** and **Audio**.
+
+### Movies
+
+The list shows the data's movies, from any release:
+
+| release | movies | played by |
+|---|---|---|
+| GameCube | THP (`fmv_/bglogo`, `hw_intro`...) | the editor itself |
+| PC | Bink (`FMV_/*.bik`) | FFmpeg |
+| PS2 (retail and prototype) | PSS (`*.PSS`) | FFmpeg for the picture; the editor for the sound |
+
+Each row shows the format, picture size, length and sound. Click a movie to open it in the 3D
+view's place (the **Movie: NAME** tab; **3D view** switches back).
+
+* **▶ Play** / **⏸ Pause**, **■ Stop** (back to the start), **⏮ Restart**, and the scrubber: you
+  can seek to any frame.
+* The sound plays through the system's player, from wherever the picture is.
+* **Export audio WAV** saves the soundtrack.
+* **Open in your video player** hands the file to your system's video player. Use it for a Bink
+  or PSS movie when FFmpeg isn't found, and for any other video.
+* **Open a video…** picks any file: the game's kinds play in the editor, others go to your video
+  player. **Rescan** reads the list again; it also lists the video files in an open mod's folder
+  (as "mod: ...").
+
+FFmpeg (versions 6 to 9) comes with the editor's packages. The editor looks for it in
+`HWVX_FFMPEG_DIR` if that is set (and only there), else beside the program, in the package, and
+in the system's libraries. Without it the PC's and the PS2's movies say **FFmpeg not found**
+(section 11).
+
+### The Audio browser
+
+The **Audio** side counts everything playable in the data. **Open the Audio browser** shows the
+list in the 3D view's place (the **Audio browser** tab). It holds:
+
+* **sound**: every pack's sound effects, in every archive (cars, weapons, the shared sounds, the
+  menus', the worlds', the briefings');
+* **instrument**: the samples of the songs' instrument banks;
+* **song**: every MIDI song (the menus' and the worlds');
+* **movie**: every movie's soundtrack;
+* **mod file**: an open mod's own audio files (its sounds and soundtrack).
+
+Search by archive, pack and name (for example `hw_cars car_5`, `sound/3`, `music`), tick the
+kinds to show, or pick one archive. Each row has **▶** / **■**, its length, rate and loop start,
+and **Open in pack** (loads the pack and opens the item in its own view). A sound's or sample's
+▶ plays it through the system's player. A song's ▶ plays it in the game (its sequencer), not
+through the system's player. A movie's ▶ opens the movie.
+
+Select a row for its waveform with the loop marker. **Export WAV** saves a sample; for a song,
+**Export MIDI** saves it as a standard MIDI file.
+
+From the command line, `--movie NAME[@SECONDS][!]` opens a movie (paused at SECONDS; `!` plays
+it), and `--audio SEARCH` opens the Audio browser with that search.
 
 ---
 
@@ -572,11 +780,56 @@ new pickups (docs/plans/pickups-and-briefings.md).
 * **Base volumes**: box volumes without a closed box (a few) aren't listed; a box volume
   another one shares its shape with can't be moved (the test drive's build says so; none in the
   GameCube data).
-* **Shared levels: light and creature volumes of your own** **The gizmo while the camera spins** **Trigger limits**: the game allows only so many active triggers of each type (your level's
+* **Shared levels: light and creature volumes of your own** work through the volume grid (a
+  thing inside one is lit, a car inside a rescue zone counts), but a light volume's world-wide
+  part (directional and ambient lights) and creature spawning read the world's own volume list,
+  which only the test drive's built world has your volumes in.
+* **Patches** don't change links (which item a pickup gives, which model an instance shows) or
+  the numbers the game indexes with (a volume's type, a start's port, a timer's count-up): see
+  section 3. Make a record of your own instead where you can (a volume, an item, a start).
+* **The gizmo while the camera spins** (Space) picks from the camera of up to a second ago;
+  stop the spin to drag an axis.
+* **Trigger limits**: the game allows only so many active triggers of each type (your level's
   plus the base ones kept). Going over is a check error; drop base triggers you don't need.
 * **macOS: the game stalls while its window is covered.** With the Metal renderer, a test drive
   window hidden behind another window stops drawing. The editor brings it to the front; if it
   still stalls, start the browser with `--testdrive-renderer opengl`.
+
+**The Content tab:**
+
+* **No undo yet.** Untick a number to go back to the base's value, or **↺ Reset** a retail car
+  or weapon. (Ctrl/Cmd+Z there undoes the Level tab's last edit, if a level is open.)
+* **F5** on the Content tab drives the selected car or weapon. For a track, a sound or a song use
+  its own button.
+* **A car's own model** isn't possible yet: a new car is a base car's, repainted. Weapons are
+  picked by number, not name. New pickups aren't possible yet
+  (docs/plans/pickups-and-briefings.md).
+* **Paint** shifts the hue and brightness of a texture the player already has: a mod can't bring
+  a car texture of its own. In the editor, only a track's world select picture can be your own
+  (a PNG).
+* **Music files over ten minutes** play in the game, but **Save as mod** can't check them.
+* **Custom worlds** are experimental: a command-line test only, not in the editor or in mods
+  yet, a ground of one surface, textures from the base world only (section 9b).
+
+**The releases (GameCube, PC, PS2):**
+
+* The PC has no multi-player drag worlds, so six of the 60 songs aren't on the PC. The
+  Soundtrack list shows them as "not on this release (PC)" and doesn't offer them; a mod's song
+  for one is kept for the other releases, but can't be tested on the PC. A track over one of
+  those worlds is left out of the PC's world select.
+* A few car and weapon textures have other numbers on the PC or the PS2 (section 9b, Retail
+  changes); the editor writes the paint for each release.
+* A custom world over a world 3 or world 5 base shows some other textures on the PC (its texture
+  packs are in another order there).
+* PC and PS2 movies need FFmpeg (it comes with the editor's packages; section 9c).
+
+**The Media tab:**
+
+* A song (MIDI) plays in the game behind the 3D view, through its sequencer, not through the
+  system's player: it can't be heard while the game isn't running, and **Export MIDI** is the way
+  to hear it elsewhere.
+* Sounds, samples and movie sound play through the system's player (`aplay`, `afplay` or
+  PowerShell).
 
 ---
 
@@ -611,6 +864,12 @@ of the world's effect points (list or click), then **+ Add → Effect point, her
 
 **The game window doesn't appear or doesn't move (macOS)**: see the covered-window note in
 Limits (`--testdrive-renderer opengl`).
+
+**A PC or PS2 movie says "FFmpeg not found"**: the editor found no FFmpeg (6 to 9:
+libavformat, libavcodec, libavutil). The packages bring it; a build from a checkout uses the
+system's (install FFmpeg with your package manager), or set `HWVX_FFMPEG_DIR` to the folder that
+holds its libraries (only that folder is then looked in). Meanwhile **Open in your video player**
+plays the file.
 
 **Logs**: the test drive's game log is `testdrive.log` in the editor's scratch folder
 (`viewer-pref/testdrive/` next to the browser program, or under `--pref`); the viewer's is

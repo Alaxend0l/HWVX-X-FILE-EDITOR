@@ -16,7 +16,7 @@ retail behaviour is unchanged.
   `viewer: listening on 127.0.0.1:N` (clients read N from the log).
 - `HWVX_VIEWER_SCHEMAS=dir`: the struct schemas (`schemas/*.schema.json`, the ones with
   `x-c-struct`); default `schemas/` next to the program, one folder up, or in the current folder.
-- One client at a time: a new connection replaces the old one.
+- One client at a time: a new connection replaces the old one once its hello (with the token) is accepted.
 - Commands run on the game's thread between frames, so the pack data never changes under a frame.
 - Clients: `tools/browser` (Rust/egui: the data browser; `src/client.rs` is a reusable client),
   `tools/viewer_client.py` (Python module and one-shot CLI).
@@ -128,8 +128,10 @@ For the superproject's docs/viewer-protocol.md; each item says where.
   a web page can reach 127.0.0.1 and send a body of JSON lines, and that is not a client.
   `tools/browser` and `viewer_client.py` make up a token when they start the game and pass it;
   connecting to a running viewer they take `--token T` (default `HWVX_VIEWER_TOKEN`).
-  Still one client at a time: a new connection replaces the old one even before its hello
-  (a page could knock the browser off, not drive the viewer).
+  Still one client at a time, but a newcomer is held pending (up to 3 s) until its first line:
+  a valid hello replaces the served client; anything else, an HTTP-looking request included, is
+  closed without an answer and the served client is kept (a page can neither drive the viewer
+  nor knock the editor off).
 
 ## Framing (add)
 

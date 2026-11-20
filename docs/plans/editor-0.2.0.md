@@ -24,6 +24,11 @@ browser), the gizmo drag and patches beyond numbers, the level limits lifted, th
    drop (or hide) the base's animated instances, movers and paths (the train's track), keeping
    only what the world asks for. Ship custom worlds marked experimental.
 
+5. **Joyride worlds as templates** (the user, 2026-11-20): missions, challenges, battles and drag
+   races made on a Joyride level's world (open-ended, only 10 gears and a key), with "remove the
+   gears and the key" in one step; New level and New track offer them (branch
+   `joyride-templates`, in progress).
+
 ## Suggestions from the user (while trying the editor)
 
 - **"Extract a disc…"** (File menu, and on the game data screen when a PC or PS2 image is picked):

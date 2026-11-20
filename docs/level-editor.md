@@ -798,7 +798,7 @@ it), and `--audio SEARCH` opens the Audio browser with that search.
 **The Content tab:**
 
 * **No undo yet.** Untick a number to go back to the base's value, or **↺ Reset** a retail car
-  or weapon. (Ctrl/Cmd+Z there undoes the Level tab's last edit, if a level is open.)
+  or weapon. (Ctrl/Cmd+Z does nothing there.)
 * **F5** on the Content tab drives the selected car or weapon. For a track, a sound or a song use
   its own button.
 * **A car's own model** isn't possible yet: a new car is a base car's, repainted. Weapons are

@@ -135,8 +135,66 @@ The editor writes a new folder (named after the level) with a `level.jsonc` and 
 own triggers kept (`base triggers: all`), so it plays like the original until you change it. A
 new Battle level starts with round rules (5 kills, 3 rounds, 2 minutes).
 
-<!-- Joyride worlds as templates for every mode: to be filled in from
-     HWVX-SDL tools/browser/docs-joyride-templates.md when that work is merged. -->
+### Joyride worlds as templates (a level of any mode on any world)
+
+A Joyride level is an open-ended version of its
+world: the whole world, its own intro, music and effects, and ten gears and a hidden key to pick
+up. So it is the best stage for a level of another mode, and the only one on some worlds: retail
+has no challenge on world 4. Every mode can now be made on every Joyride world.
+
+
+**File > New level…** (or **New level…** in the Level tab): **on** lists the mode's retail
+worlds, then, under *a Joyride world as the template*, the five Joyride worlds
+(`world1 (Joyride world 1)` … `world5 (Joyride world 5)`) for every mode but Joyride. A Joyride
+world picked shows:
+
+* **Template: remove the gears and the key** (on by default): the level takes out the template's
+  ten gears and its key (their pickup points), the triggers that count them and unlock cars, and
+  the two objectives that show them on the intro box ("Collect 10 GEARS to UNLOCK CAR", "Find
+  Hidden KEY to UNLOCK CAR"). The world is a clean stage; its intro, music and effects stay.
+* a line on what the template gives the mode and what is left to you (below).
+
+**Make it** extracts the world the first time (a few seconds, a spinner) and writes the project
+with `xdlrs level new` (the same code: `xdlrs::level_template`). **Level settings** then says
+"11 base pickups and 2 objectives removed (the template's gears and key)", with **keep them**
+(the gears, key and objectives back, base triggers back to all).
+
+The **Content tab**'s **+ New track**: *made from* lists the mode's retail tracks, then
+"Joyride world 1 … 5 as the template" (not for Joyride). Such a track extends the mode's first
+track, names the Joyride world (`world`) and starts with that world's select picture. Link a level
+project made on the same world to give it a race.
+
+#### What each mode gets on a Joyride world, and what it needs
+
+A Joyride world's script is free roam: an intro box, the player's car held until it is closed,
+music; nothing ends the level and nothing counts rounds. A level of another mode keeps that
+script (minus the collectibles) and New level adds the rest as files of its own, to change:
+
+| mode | the template adds | you add | the checks warn when |
+|---|---|---|---|
+| Challenge | a 60 s clock on the HUD (`clock`, timer type 12, the HUD's), started when the intro box closes (`go`), `timeout`: lost at 0; a briefing line in the intro box (`brief`) | what wins it: a trigger with `end_level` result 4 (a volume to reach) | nothing ends it won |
+| Mission | the same (no briefing screen: the game leaves out the alias mission's, which tells of another world) | the objectives and what wins it | nothing ends it won |
+| Battle | round rules (kills 5, 3 rounds, 2 minutes on the HUD's round clock: `rules.roundTimer`), `next-round` (a round won: the car held, `reset_game_round` after 3 s), `won`/`lost` (the series over: `end_level` by whether player 1 won it) | opponents: a start each (port 0, the AI's) | under 2 starts; no `game_rounds_complete` trigger that ends the level; an AI start (it roams) |
+| Drag race | rules (no target, 1 round), the same round flow | 3 more starts, one per lane (**Lanes: Check the lanes**), a finish volume and a `round_complete` trigger per car | not 4 starts; no round flow; an AI start |
+
+* **One start.** A Joyride world has the player's start only (a battle world has 7, a drag
+  world 4). Battles and drag races add theirs: + Add > Start, here.
+* **AI on an open world.** The world has no AI scripts of the mode (a battle world's cars attack,
+  a drag world's keep to their lanes): an AI car of the level's own drives its vehicle's own AI on
+  the world's roads, wherever they lead. It roams: it won't chase a flag or keep to a lane. Use AI
+  cars as traffic, rivals in a battle, or leave them out and race the clock (the joyride-drag
+  sample). An AI start is port 0 in the editor; the game gets port 6 (the AI's) and spawns it
+  with the level.
+* **No results screens.** A battle or drag world shows its round and final results with
+  interfaces of its own pack; a Joyride world has none, so the template's round flow goes on to
+  the next round after 3 s and ends the level after the last. The win and lose of a challenge or
+  mission go straight back to the menu (a challenge world's "objective complete" screen is in
+  its own pack too).
+* **The intro box.** The Joyride intro shows the world's objectives by their HUD ids (1, 2). The
+  removed objectives are hidden and lose their ids, so the level's own objective with id 1 (the
+  template's `brief`) is the intro's text. Keep it short (the box holds about two lines).
+* **Lanes and the spawn box.** Open worlds are wide; the start checks (the cars' box against the
+  world, starts overlapping) and **Check the lanes** work as on any world.
 
 ---
 

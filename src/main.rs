@@ -125,6 +125,13 @@ enum Cmd {
         #[arg(long)]
         world: PathBuf,
     },
+    /// Build a custom world (docs/plans/custom-worlds.md): an archive with one
+    /// hub quadrant pack and one collision pack, and the world.jsonc the game
+    /// reads (HWVX_WORLD=OUT/world.jsonc)
+    World {
+        #[command(subcommand)]
+        cmd: WorldCmd,
+    },
     /// Convert PS2-prototype audio packs (dialogue sound sequences) into an
     /// extracted GameCube audio archive: prototype packs pair with GameCube
     /// packs by TOC id, each pair swaps the sequence graph and rebuilds the
@@ -242,6 +249,36 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum WorldCmd {
+    /// The generated test world: a ground, a ramp and a wall (stage 1)
+    Demo {
+        /// Folder for world.xgc and world.jsonc
+        output: PathBuf,
+        /// Also write it as a plain glTF (demo.gltf) with a project file
+        /// (demo.jsonc) that `world build` reads: the sample to start from
+        #[arg(long)]
+        gltf: bool,
+    },
+    /// A world from a glTF by its project file (see src/custom_world/gltf_in.rs)
+    Build {
+        /// The project file (world.jsonc: model, scale, materials, start ...)
+        project: PathBuf,
+        /// Folder for world.xgc and world.jsonc (the game's)
+        output: PathBuf,
+        /// Also write OUTPUT/heightmap.ppm: the solid's top seen from above
+        /// (brighter is higher; the start red, its heading a red line)
+        #[arg(long)]
+        heightmap: bool,
+    },
+    /// List a glTF's mesh nodes, materials and bounds (model units)
+    Inspect { model: PathBuf },
+    /// A vertical line through a project's world at game x, z: the drawn
+    /// triangles it crosses (node, material, height) and where the built
+    /// collision turns solid / open along it
+    Probe { project: PathBuf, x: f64, z: f64 },
+}
+
 fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(code) => code,
@@ -274,6 +311,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::PortCar { beta, into, id, donor, imports, view_offset, force } => cmd_port_car(&beta, &into, id, donor, &imports, view_offset, force),
         Cmd::PortWorld { beta, geo, col, tex, world } => cmd_port_world(&beta, &geo, &col, &tex, &world),
         Cmd::PortAudio { gc, beta } => cmd_port_audio(&gc, &beta),
+        Cmd::World { cmd } => cmd_world(cmd),
     }
 }
 
@@ -1164,5 +1202,142 @@ fn cmd_patch_exe(exe: &Path, revert: bool) -> Result<ExitCode> {
     }
     fs::write(exe, &bytes).with_context(|| format!("writing {}", exe.display()))?;
     out!("{}: patched (cars 33-35 unlocked)", exe.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_world(cmd: WorldCmd) -> Result<ExitCode> {
+    use hwvx_xfile::custom_world as cw;
+    match cmd {
+        WorldCmd::Demo { output, gltf } => {
+            let src = cw::demo();
+            if gltf {
+                fs::create_dir_all(&output)?;
+                fs::write(output.join("demo.gltf"), serde_json::to_string(&cw::gltf_in::write_gltf(&src))? + "\n")?;
+                fs::write(output.join("demo.jsonc"), cw::demo_project())?;
+                out!("wrote {} and demo.jsonc", output.join("demo.gltf").display());
+            }
+            let b = cw::build(&src, &cw::terrain::Options::default())?;
+            write_world(&output, &b, &cw::world_jsonc("uid://hwvx-world-demo", "Demo Ramp", 0, "world", b.geometries, src.start, "hwvx-x world demo: a generated test world (ground, ramp, wall) over Joyride's world1"))?;
+            out!("{}", b.report());
+            Ok(ExitCode::SUCCESS)
+        }
+        WorldCmd::Build { project, output, heightmap } => cmd_world_build(&project, &output, heightmap),
+        WorldCmd::Inspect { model } => cmd_world_inspect(&model),
+        WorldCmd::Probe { project, x, z } => cmd_world_probe(&project, x, z),
+    }
+}
+
+fn write_world(output: &Path, b: &hwvx_xfile::custom_world::Built, jsonc: &str) -> Result<()> {
+    fs::create_dir_all(output).with_context(|| format!("creating {}", output.display()))?;
+    fs::write(output.join("world.xgc"), &b.archive)?;
+    fs::write(output.join("world.jsonc"), jsonc)?;
+    out!("wrote {} and world.jsonc", output.join("world.xgc").display());
+    Ok(())
+}
+
+fn cmd_world_build(project: &Path, output: &Path, heightmap: bool) -> Result<ExitCode> {
+    use hwvx_xfile::custom_world as cw;
+    let p = cw::gltf_in::Project::read(project)?;
+    let (src, rep) = cw::gltf_in::import(&p)?;
+    if let Some((lo, hi)) = rep.bounds {
+        out!("model: {} nodes ({} left out), {} degenerate triangles dropped; bounds (game units) {:.1} {:.1} {:.1} .. {:.1} {:.1} {:.1}", rep.nodes.len(), rep.left_out, rep.degenerate, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+    }
+    for (m, n) in &rep.materials {
+        out!("  material {m:?}: {n} triangles drawn");
+    }
+    let b = cw::build(&src, &cw::terrain::Options::default())?;
+    let mut src = src;
+    let s = src.start.map(|x| x as f64);
+    let ground = b.grid.ground_below([s[0], s[1], s[2]], 1.0e5, 1.0);
+    out!("start: {}; ground below it: {}", if b.grid.solid([s[0], s[1], s[2]]) { "inside the solid (!)" } else { "in the open" }, ground.map_or("none (!)".into(), |g| format!("y {g:.2}")));
+    if let (Some(up), Some(g)) = (p.start_to_ground, ground) {
+        src.start[1] = (g + up) as f32;
+    }
+    let comment = format!("hwvx-x world build {}", project.display());
+    write_world(output, &b, &cw::world_jsonc(&p.id, &p.name, p.base, "world", b.geometries, src.start, &comment))?;
+    out!("start {:.1} {:.1} {:.1} heading {:.1}", src.start[0], src.start[1], src.start[2], src.start[3]);
+    let (have, ok, bad) = cw::terrain::surface_check(&src.collision, &b.grid, 200, 0.5);
+    out!("surfaces from above: {ok} of {have} raster points within 0.5 of the highest solid triangle ({:.2}%)", 100.0 * ok as f64 / have.max(1) as f64);
+    for (x, z, want, got) in bad {
+        out!("  at {x:.1} {z:.1}: wanted y {want:.2}, got {}", got.map_or("nothing".into(), |y| format!("{y:.2}")));
+    }
+    if heightmap {
+        let ppm = b.grid.heightmap_ppm(30.0, src.start);
+        fs::write(output.join("heightmap.ppm"), ppm)?;
+        out!("wrote {}", output.join("heightmap.ppm").display());
+    }
+    out!("{}", b.report());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_world_inspect(model: &Path) -> Result<ExitCode> {
+    use hwvx_xfile::custom_world::gltf_in::Gltf;
+    let g = Gltf::open(model)?;
+    let mats = g.json.get("materials").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+    let (mut alo, mut ahi) = ([f64::MAX; 3], [f64::MIN; 3]);
+    for (ni, m, name) in g.mesh_nodes(&|_| false) {
+        let mi = g.json["nodes"][ni]["mesh"].as_u64().unwrap_or(0) as usize;
+        let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+        let mut tris = 0;
+        let mut names = vec![];
+        for pr in g.json["meshes"][mi]["primitives"].as_array().cloned().unwrap_or_default() {
+            let Some(pa) = pr["attributes"]["POSITION"].as_u64() else { continue };
+            for v in g.accessor(pa as usize)? {
+                let p: [f64; 3] = std::array::from_fn(|i| m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2] + m[i][3]);
+                for k in 0..3 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+            }
+            tris += match pr.get("indices").and_then(|i| i.as_u64()) {
+                Some(i) => g.json["accessors"][i as usize]["count"].as_u64().unwrap_or(0) / 3,
+                None => g.json["accessors"][pa as usize]["count"].as_u64().unwrap_or(0) / 3,
+            };
+            names.push(pr.get("material").and_then(|x| x.as_u64()).and_then(|x| mats[x as usize]["name"].as_str()).unwrap_or("-").to_string());
+        }
+        for k in 0..3 {
+            alo[k] = alo[k].min(lo[k]);
+            ahi[k] = ahi[k].max(hi[k]);
+        }
+        out!("{name:?}: {tris} triangles, {:.2} {:.2} {:.2} .. {:.2} {:.2} {:.2}, materials {}", lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], names.join(", "));
+    }
+    out!("all: {:.2} {:.2} {:.2} .. {:.2} {:.2} {:.2}", alo[0], alo[1], alo[2], ahi[0], ahi[1], ahi[2]);
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_world_probe(project: &Path, x: f64, z: f64) -> Result<ExitCode> {
+    use hwvx_xfile::custom_world as cw;
+    let p = cw::gltf_in::Project::read(project)?;
+    let (src, _) = cw::gltf_in::import(&p)?;
+    for m in &src.meshes {
+        for part in &m.parts {
+            for t in &part.tris {
+                // barycentric hit of the vertical line
+                let (a, b, c) = (t.p[0], t.p[1], t.p[2]);
+                let d = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
+                if d.abs() < 1e-9 {
+                    continue;
+                }
+                let l1 = ((b[2] - c[2]) * (x as f32 - c[0]) + (c[0] - b[0]) * (z as f32 - c[2])) / d;
+                let l2 = ((c[2] - a[2]) * (x as f32 - c[0]) + (a[0] - c[0]) * (z as f32 - c[2])) / d;
+                let l3 = 1.0 - l1 - l2;
+                if l1 >= 0.0 && l2 >= 0.0 && l3 >= 0.0 {
+                    out!("drawn: {} / {}: y {:.2} ({})", m.name, part.name, l1 * a[1] + l2 * b[1] + l3 * c[1], if d > 0.0 { "facing down" } else { "facing up" });
+                }
+            }
+        }
+    }
+    let b = cw::build(&src, &cw::terrain::Options::default())?;
+    let g = &b.grid;
+    let mut y = g.hi[1];
+    let mut was = g.solid([x, y, z]);
+    while y > g.lo[1] {
+        y -= 0.25;
+        let s = g.solid([x, y, z]);
+        if s != was {
+            out!("collision: {} at y {:.2}", if s { "solid below" } else { "open below" }, y + 0.125);
+            was = s;
+        }
+    }
     Ok(ExitCode::SUCCESS)
 }

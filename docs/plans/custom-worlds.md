@@ -228,3 +228,118 @@ stage 10, plus undo/redo.
 7. Builder in `hwvx-x` (has encoders and archives) or move those into xdlrs (the editor's
    crate)?
 8. Retire `tools/xdl_chunk.py` once stage 5 matches it on the arena?
+
+## 6. Stages 1 and 2 as built (2026-11-20, branch `custom-worlds`)
+
+**Built.** `hwvx-x world demo OUT [--gltf]`, `world build PROJECT.jsonc OUT [--heightmap]`,
+`world inspect MODEL`, `world probe PROJECT X Z` (`src/custom_world/`: `mod.rs` packs and
+archive, `terrain.rs` collision, `gltf_in.rs` glTF and project). HWVX-SDL:
+`src/game/Port_World.c` (the overlay of §2, as specified, hooked in `State_ProgressionManager.c`
+states 0, 2 and 7 and `dvd.c`), `tools/world_drive.sh`, `tools/world-samples/ramp` (the demo as a
+plain glTF with its project file). The world's archive is `@world\<archive>` beside
+`HWVX_WORLD`'s file (not a mod yet: stage 4). Tests: `cargo test custom_world` (packs read back
+with `read_gc` and `walk`, down rays on the ramp, the demo through glTF gives the same archive,
+placement and mirroring, `HWVX_TEST_LAVA_CAGE=<project>` for a real level, skipped without it);
+drives on GC data; the attract demo frame-identical (1,246 frames).
+
+**Results.** Demo: the car climbs the ramp (y 2 → 76 at z -228 where the slope is at 74.4), flies
+to 106, lands, stops at the walls; lowest y 2 over 1,836 log lines. A real modeller's level (a
+1.5 km arena from a Godot game, FBX → glTF once with Blender, 9,312 triangles, 20 meshes): 3,506
+cells, 2.1 MB collision, built in 0.8 s; 99.84% of a 200 x 200 raster of its surfaces seen from
+above match the collision within 0.5; driven 4,000 units over its terrain (y -139 .. 120), no
+fall-through.
+
+**Found on the way** (for stages 3 and 10):
+
+* **Units and axes.** The game is right-handed and Y-up like glTF and Godot (steering right
+  turns a car facing +z towards -x), forward is (sin h, 0, cos h): a glTF goes in unmirrored.
+  Cars are ~9 x 6 x 21 units (Twin Mill: 8.96 x 6.2 x 21.2), so **about 8.5 units a metre**
+  for a car-scaled model; a project's `scale` sets it.
+* **Grid headroom.** Hits outside a cell's box are dropped, so a grid ending 1 unit above the
+  highest surface (the chunker's) lets a car on it lose its ground contact: the ramp's launch
+  changed (85 → 106 high) once the grid reached a square's height above it. The builder adds one.
+* **Modellers' meshes need a union per cell.** One solid-leaf tree of everything in a cell (the
+  chunker's way) breaks where meshes overlap: a tower pushed into the ground left the ground
+  beside it empty (below the ground, in front of the tower's buried walls, reads as air), and a
+  roof slab through its walls (one mesh, two solids) left the slab empty past the walls. Now
+  each connected piece of a mesh node is a solid; in a cell, each piece's polygons are cut along
+  the others' planes and the parts **under** another piece (the first of its triangles straight
+  above faces up) are dropped. A tree's own inside test (the first try) is no good for that: an
+  open mesh's tree is only right near its surfaces. Single-sided decks count as solid below.
+* **Polygon order.** An open surface's tree depends on the order (a cliff face picked early cut
+  through the plateau above it): each cell tries the source order, walls first, floors first,
+  largest first, and keeps the tree that best matches "under a surface" on a 6 x 6 x 6 raster.
+  99.03% (union only) → 99.43% (pieces) → 99.84% (order). What is left is at the rim.
+* Untextured groups (`texture: null`, vertex colour only) draw fine; the base world's fog and
+  far plane are dark and short for a big world (stage 7). The base level's teleporters,
+  volumes, speakers, creatures and radar map are moved or dropped as §2 says; the radar map's
+  texture slot is written by the refresh, so it is cleared at state 7.
+
+**Still open.** Surfaces are all material 0 (question 5); textures are base indices only
+(stage 6); a mod cannot ship the archive yet (stage 4); hub only, no streaming (stage 5).
+
+## 7. A car with its own model (Headline)
+
+Today a mod car is a base car (`extends: base://HW_Cars/car_N`) with merge patches on its
+records (`patches`: `CarAInfo/0/accel` ...) and colour recipes on its textures
+(`schemas/Mod.schema.json` 55-95, the editor's Content tab). Its geometry, skeleton, wheels and
+collider are the base car's. The user's car **Headline** (a Godot car: `cars/headline.tscn`,
+`cars/models/headline.fbx`, `cars/headline/materials`, `cars/headlinestats.tres`) is the
+example of a car with a model of its own. Not built; what it would take:
+
+**What a car pack's model is** (`docs/beta-cars/research/objects.md` §2, `CarA.h`):
+
+| part | where | Headline has |
+|---|---|---|
+| geometry | `CarAInfo.modelRef` → `MotionAnim`: `MotionPart`s (geometry + bone), a `Skeleton` of `AnimNode`s (quat + position), `KeyAnim`s (steering 0x48, three additive anims) | 26 objects in one FBX, no skeleton: one bone each for the body, the wheels, and any part that moves |
+| breakable parts | `MotionAnim.0x38` `CarPartList`: parts with a damaged geometry and debris (`damagePercent` 75, `damageLevel` 20) | none (Roarcage cars do not shed parts): an empty list or the intact mesh twice |
+| wheels | `CarAInfo.wheels` (`CarTrailBone` 0x50 each: offset, widths, `restLength`, `springRate`, `damping`, `friction`, `maxFriction`, `handbrakeGrip`, `driveBlend`, driven/skids/dusts) plus a bone and geometry each | `wheel.tscn` (one model for four), positions FrontLeft (-0.42, 0.239, -0.683) ... BackRight (0.42, 0.239, 0.965) m |
+| collider | `CarAInfo.collider` (`CarACollider` 0x4C): type 0 box (min/max) or a hull, mass, `maxHealth`, `damageThreshold`, `inertiaScale`, gravity | `BoxShape3D` 1 x 0.55 x 2 m |
+| LODs | each geometry's LOD list (cars: 2-3 levels) | Godot generates LODs at import; the FBX has one |
+| shadow | `CarAInfo.0x54` (`reflectionGeom`, drawn under the car in the garage) and the car's stencil shadow volume (an edge list: `build_gc_shadow`) | `shadow_mesh` in the scene; a closed hull is enough |
+| textures | GC CMPR / RGBA8 in the car pack, by texture relocations | toon shader with a base colour per material (`car_paint` red 0.69, 0.03, 0.02), a carbon texture |
+| the rest | engine (`CarAEngine`: cameras, torque curve, steering), HUD and stat bars (`CarAHud`), accel, stunt, sounds, AI scripts, slaves (weapons, pickups) | kept from the base car the mod extends |
+
+**What importing Headline would take.**
+
+1. Convert once (Blender) to glTF, as the level was; the glTF's nodes name the parts.
+2. A car project (`car.jsonc`, like a world project): `extends` a base car (everything not
+   below comes from it), `model` (glTF), `scale` (8.5 units a metre puts its 2.5 m on the base
+   cars' ~21 units), which node is which wheel (or one wheel mesh and four positions), the body
+   nodes (merged into one geometry per bone, a group per material), material → colour or PNG,
+   the collider box.
+3. `hwvx-x car build`: writes the car's own pack data the way `port-car` writes a converted
+   prototype car (`src/convert/car.rs`): geometry with `build_gc` (+ `build_pc` for PC data), a
+   skeleton of one root bone plus four wheel bones at the wheel positions (the steering
+   `KeyAnim` turns the front two: copy the base car's tracks, retargeted by bone index), the
+   collider box, a shadow hull, LODs (the same mesh, or a decimated one), textures encoded from
+   PNGs (stage 6's encoder), everything else copied from the base car's records.
+4. Shipping: like a world, a mod would carry the built pack (stage 4's checked archives), never
+   the base car's geometry or textures.
+5. The car select's thumbnail: `hwvx-x render-car` renders it from the built pack (`roster`).
+
+**Godot stats → `CarAInfo`** (`headlinestats.tres`; Roarcage's `rust/sim/src/stats.rs` and
+`tuning.rs` say what each is; HWVX's from `docs-pending/car-stats-inventory.md`). The physics
+models differ (Roarcage: PhysX-like wheel colliders in m/s; HWVX: rpm and gears), so this is a
+starting point to tune by driving, not a conversion:
+
+| Headline | value | HWVX field | how |
+|---|---|---|---|
+| `max_health` | 500 | `collider.maxHealth` (1000-1700) | ×2-3 into the retail range |
+| `max_speed` | 50 m/s | `maxRpm` (7100-10000; top speed follows it) | rank against the other Roarcage cars into 7100-10000 |
+| `max_boost_speed`, `max_boost` | 75, 200 | `turboRpmScale`, `turboTorqueScale` (4WD/turbo) | the boost-to-top ratio 1.5 as the turbo's |
+| `motor_force` (Tuning `mass` 1500) | 1250 | `collider.mass` (15-40), `engine.torqueCurve` | force / mass as acceleration; mass into 15-40 |
+| `brake_force` | 3000 | `accel.brakeDecel` (rpm/s) | scaled |
+| `max_stunt_speed` | 400 | `stunt` pitch/roll rate (1.8-2.6), spin = pitch + 0.6 | rank into the range |
+| `front_stiffness`, `back_stiffness`, `max_steer_angle` | 4, 6, 12° | wheel `friction` front 2.3-4.7 / rear 1.9-3.5, `engine.steerRate` | ratio kept |
+| `jump_force`, `jump_count` | 20000, 1 | none (no jump in HWVX) | dropped |
+| attack, crit, items, abilities, weapons (`shotgun`, `atom_blaster`) | | slaves (weapon slots) / items | the base car's; weapons are a separate mod question |
+| stat bars | | `hud` bytes SPEED / ARMOR / GRIP / STUNT (25-100) | computed from the above, as the editor's Content tab shows them |
+
+**Stages.** (1) A car project and `hwvx-x car build` with the base car's skeleton and records,
+only the body geometry replaced (one bone), wheels the base's: drivable, tested like a world
+(drive, car log). (2) Own wheels (geometry and positions), collider box, shadow hull. (3) Own
+textures (PNG → CMPR/DXT, with stage 6). (4) Stats mapping as a table the editor shows and
+edits. (5) Shipping it in a `.xmod` (with stage 4's checks). (6) Breakable parts and LODs. The
+same licensing rule as the level: the user's car is read from a path given in an environment
+variable by any test, never committed.

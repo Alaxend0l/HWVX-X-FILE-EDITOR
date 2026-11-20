@@ -57,6 +57,19 @@ pub struct Vertex {
     adc: bool,
 }
 
+impl Vertex {
+    /// A vertex of new geometry (no PS2 strip flag).
+    pub fn new(pos: [f32; 3], uv: [f32; 2], attr: Attr) -> Vertex {
+        Vertex { pos, uv, attr, adc: false }
+    }
+}
+
+/// An 8-bit RGBA colour (0xFF full) as [`Attr::Colour`] takes it: the
+/// prototype's scale (0x80 full), which [`build_gc`] doubles back.
+pub fn colour_attr(c: [u8; 4]) -> Attr {
+    Attr::Colour([c[0] >> 1, c[1] >> 1, c[2] >> 1, c[3] >> 2])
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Group {
     pub flags: u16,

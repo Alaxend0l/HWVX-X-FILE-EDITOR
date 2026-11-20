@@ -16,6 +16,7 @@
 pub mod archive;
 pub mod blob;
 pub mod convert;
+pub mod custom_world;
 pub mod exepatch;
 pub mod format;
 pub mod gltf;

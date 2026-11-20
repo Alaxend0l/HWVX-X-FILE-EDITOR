@@ -1256,6 +1256,9 @@ fn cmd_world_build(project: &Path, output: &Path, heightmap: bool) -> Result<Exi
     let comment = format!("hwvx-x world build {}", project.display());
     write_world(output, &b, &cw::world_jsonc(&p.id, &p.name, p.base, "world", b.geometries, src.start, &comment))?;
     out!("start {:.1} {:.1} {:.1} heading {:.1}", src.start[0], src.start[1], src.start[2], src.start[3]);
+    let (vn, vp, vh) = cw::terrain::volume_check(&src.collision, &b.grid, 7);
+    let (fs, fp, fh) = cw::terrain::face_check(&src.collision, &b.grid).values().fold((0, 0, 0), |a, s| (a.0 + s.samples, a.1 + s.phantom, a.2 + s.hole));
+    out!("solid where nothing is / open inside a solid: {:.2}% / {:.2}% of {vn} points in the cells, {:.2}% / {:.2}% of {fs} points a unit off the faces", 100.0 * vp as f64 / vn.max(1) as f64, 100.0 * vh as f64 / vn.max(1) as f64, 100.0 * fp as f64 / fs.max(1) as f64, 100.0 * fh as f64 / fs.max(1) as f64);
     let (have, ok, bad) = cw::terrain::surface_check(&src.collision, &b.grid, 200, 0.5);
     out!("surfaces from above: {ok} of {have} raster points within 0.5 of the highest solid triangle ({:.2}%)", 100.0 * ok as f64 / have.max(1) as f64);
     for (x, z, want, got) in bad {

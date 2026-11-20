@@ -10,7 +10,8 @@
 //!   "offset": [0, 0, 0],             // game units, added last
 //!   "leaveOut": ["Helper"],          // nodes (and their children) not used
 //!   "renderOnly": ["sky*"],          // drawn, not solid
-//!   "collisionOnly": ["col*"],       // solid, not drawn (also extras.collision: true)
+//!   "collisionOnly": ["col*"],       // solid, not drawn (also extras.collision: true, and
+//!                                    // Godot's "-colonly" / "-convcolonly" name suffixes)
 //!   "materials": {                   // by the glTF material's name
 //!     "Lava": { "texture": null, "colour": [255, 110, 20, 255], "surface": 0 },
 //!     "*":    { "texture": 4 }       // the rest
@@ -458,7 +459,12 @@ pub fn import(p: &Project) -> Result<(Source, ImportReport)> {
         let mi = node["mesh"].as_u64().unwrap() as usize;
         let mesh = &g.json["meshes"][mi];
         let col_flag = node.pointer("/extras/collision").and_then(Value::as_bool).or_else(|| mesh.pointer("/extras/collision").and_then(Value::as_bool));
-        let col_only = col_flag == Some(true) || any(&p.collision_only, &name);
+        // Godot's import suffixes: "-colonly" (and "-convcolonly") nodes are collision only
+        let godot_col = {
+            let l = name.to_ascii_lowercase();
+            l.ends_with("-colonly") || l.ends_with("_colonly") || l.ends_with("-convcolonly") || l.ends_with("_convcolonly")
+        };
+        let col_only = col_flag == Some(true) || godot_col || any(&p.collision_only, &name);
         let render_only = col_flag == Some(false) || any(&p.render_only, &name);
         let world = mul(&place, &m);
         // a mirroring transform turns the winding over

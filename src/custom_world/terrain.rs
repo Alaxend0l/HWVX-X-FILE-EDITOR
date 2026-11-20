@@ -8,13 +8,17 @@
 //!   the span.
 //! * Per square: the triangles clipped to its box; where several solids meet
 //!   there (each connected piece of a mesh node is one), their union's
-//!   boundary ([`union_tree`]); built into a solid-leaf tree in the order that
+//!   boundary ([`union_polys`]), closed by the parts of the cell's walls
+//!   inside the solid ([`box_caps`]); built into a solid-leaf tree in the order that
 //!   best matches "under a surface" ([`Objects::inside`]; the first polygon is
 //!   the splitter, the source order first): coplanar
 //!   polygons facing the same way go in front, facing the other way are
 //!   dropped (two solids touching there, a box standing on the ground: an
 //!   inside face), tolerance 1e-4, pre-order. A cell's solid only matters in
 //!   its own box (`RayHitsBSP` drops hits outside it).
+//! * Before that, floating one-sided decks become slabs ([`solidify_decks`]) and the open
+//!   edges of floors get skirts down to the bottom ([`skirts`]); [`volume_check`] and
+//!   [`face_check`] measure the result.
 //! * Crease edges: where two faces of the welded mesh meet at more than 0.5
 //!   degrees, listed (u16) in every cell whose box grown by 10 the edge
 //!   crosses.
@@ -51,11 +55,17 @@ pub struct Options {
     pub cell_y: f64,
     /// Faces meeting at more than this many degrees make a crease edge.
     pub crease_deg: f64,
+    /// The repairs, each on by default (off only to measure what it buys): floating decks
+    /// made slabs ([`solidify_decks`]), skirts under open floor edges ([`skirts`]), the cell
+    /// walls inside the solid ([`box_caps`]) and the solid squares beside the surfaced ones.
+    pub decks: bool,
+    pub skirts: bool,
+    pub caps: bool,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { cell_xz: 250.0, cell_y: 200.0, crease_deg: 0.5 }
+        Options { cell_xz: 250.0, cell_y: 200.0, crease_deg: 0.5, decks: true, skirts: true, caps: true }
     }
 }
 
@@ -466,7 +476,7 @@ pub fn split_components(tris: &[ColTri]) -> Vec<ColTri> {
 /// The grid of a collision mesh.
 pub fn build_grid(tris: &[ColTri], opt: &Options) -> Result<Grid> {
     ensure!(!tris.is_empty(), "no collision triangles");
-    let split = split_components(tris);
+    let split = if opt.decks { prepare(tris) } else { split_components(tris) };
     let tris = &split[..];
     let mut lo = [f64::MAX; 3];
     let mut hi = [f64::MIN; 3];
@@ -489,9 +499,10 @@ pub fn build_grid(tris: &[ColTri], opt: &Options) -> Result<Grid> {
     let size: V3 = std::array::from_fn(|k| span[k] / n[k] as f64);
     let (nx, ny, nz) = (n[0], n[1], n[2]);
 
-    // polygons per square, in source order
+    // polygons per square, in source order, then the skirts
+    let skirts = if opt.skirts { skirts(tris, lo[1]) } else { vec![] };
     let mut per: HashMap<[usize; 3], Vec<(u32, Poly)>> = HashMap::new();
-    for t in tris {
+    for t in tris.iter().chain(&skirts) {
         let Some(plane) = plane_of(&t.p) else { continue };
         let a: [usize; 3] = std::array::from_fn(|k| {
             let m = t.p.iter().map(|p| p[k]).fold(f64::MAX, f64::min);
@@ -519,7 +530,30 @@ pub fn build_grid(tris: &[ColTri], opt: &Options) -> Result<Grid> {
     let (edges, open_edges, shared_edges) = crease_edges(tris, opt.crease_deg);
     let objects = Objects::new(tris, lo, size, nx, nz);
     ensure!(edges.len() <= 0xFFFF, "{} crease edges: the cells' edge indices are u16", edges.len());
+    // the squares with surfaces, and the solid ones next to them (a car pushed through a cap
+    // meets solid, not an empty square)
     let mut keys: Vec<[usize; 3]> = per.keys().copied().collect();
+    let mut solid_next: Vec<[usize; 3]> = vec![];
+    for k in &keys {
+        for (a, d) in [(0, -1i64), (0, 1), (1, -1), (1, 1), (2, -1), (2, 1)] {
+            let mut s = *k;
+            let v = s[a] as i64 + d;
+            if v < 0 || v >= n[a] as i64 {
+                continue;
+            }
+            s[a] = v as usize;
+            if per.contains_key(&s) || solid_next.contains(&s) {
+                continue;
+            }
+            let c: V3 = std::array::from_fn(|j| lo[j] + size[j] * (s[j] as f64 + 0.5));
+            if objects.inside_any(c) {
+                solid_next.push(s);
+            }
+        }
+    }
+    if opt.caps {
+        keys.extend(&solid_next);
+    }
     keys.sort_by_key(|k| (k[1], k[2], k[0]));
     let mut index = vec![0u32; nx * ny * nz];
     let mut cells = vec![];
@@ -527,7 +561,11 @@ pub fn build_grid(tris: &[ColTri], opt: &Options) -> Result<Grid> {
         let [x, y, z] = key;
         let clo = [lo[0] + size[0] * x as f64, lo[1] + size[1] * y as f64, lo[2] + size[2] * z as f64];
         let chi = [clo[0] + size[0], clo[1] + size[1], clo[2] + size[2]];
-        let tree = union_tree(per.remove(&key).unwrap(), &objects, clo, chi, 0xFFFF)?;
+        let mut polys = union_polys(per.remove(&key).unwrap_or_default(), &objects, 0xFFFF)?;
+        if opt.caps {
+            polys.extend(box_caps(&polys, &objects, clo, chi, 0xFFFF)?);
+        }
+        let tree = best_tree(polys, &objects, clo, chi, 0xFFFF)?;
         if tree.is_empty() {
             continue;
         }
@@ -763,10 +801,12 @@ pub struct Objects<'a> {
     nz: usize,
     /// (object, column) -> triangle indices whose x/z box reaches the column
     cols: HashMap<(u32, usize), Vec<usize>>,
+    /// column -> the objects with triangles reaching it
+    by_col: HashMap<usize, Vec<u32>>,
 }
 
 impl<'a> Objects<'a> {
-    fn new(tris: &'a [ColTri], lo: V3, size: V3, nx: usize, nz: usize) -> Objects<'a> {
+    pub fn new(tris: &'a [ColTri], lo: V3, size: V3, nx: usize, nz: usize) -> Objects<'a> {
         let mut cols: HashMap<(u32, usize), Vec<usize>> = HashMap::new();
         for (i, t) in tris.iter().enumerate() {
             let col = |k: usize, f: fn(f64, f64) -> f64, n: usize| {
@@ -781,7 +821,18 @@ impl<'a> Objects<'a> {
                 }
             }
         }
-        Objects { tris, lo, size, nx, nz, cols }
+        let mut by_col: HashMap<usize, Vec<u32>> = HashMap::new();
+        for (o, c) in cols.keys() {
+            by_col.entry(*c).or_default().push(*o);
+        }
+        Objects { tris, lo, size, nx, nz, cols, by_col }
+    }
+
+    /// Whether `p` is inside any object ([`Objects::inside`]).
+    pub fn inside_any(&self, p: V3) -> bool {
+        let cx = (((p[0] - self.lo[0]) / self.size[0]).floor().max(0.0) as usize).min(self.nx - 1);
+        let cz = (((p[2] - self.lo[2]) / self.size[2]).floor().max(0.0) as usize).min(self.nz - 1);
+        self.by_col.get(&(cx + self.nx * cz)).is_some_and(|os| os.iter().any(|&o| self.inside(o, p)))
     }
 
     /// Whether `p` is inside object `q`: the first of its triangles straight
@@ -825,7 +876,7 @@ impl<'a> Objects<'a> {
 /// the ground, in front of the tower's buried walls, reads as open air; and a
 /// tree's solid only holds inside its own surfaces, so a solid-leaf test of
 /// one open mesh against another (the first try) dropped faces far from it.
-pub fn union_tree(items: Vec<(u32, Poly)>, objects: &Objects, lo: V3, hi: V3, limit: usize) -> Result<Vec<Node>> {
+pub fn union_polys(items: Vec<(u32, Poly)>, objects: &Objects, limit: usize) -> Result<Vec<Poly>> {
     let mut order: Vec<u32> = vec![];
     let mut groups: HashMap<u32, Vec<Poly>> = HashMap::new();
     for (o, p) in items {
@@ -835,7 +886,7 @@ pub fn union_tree(items: Vec<(u32, Poly)>, objects: &Objects, lo: V3, hi: V3, li
         groups.entry(o).or_default().push(p);
     }
     if order.len() == 1 {
-        return best_tree(groups.remove(&order[0]).unwrap(), &order, objects, lo, hi, limit);
+        return Ok(groups.remove(&order[0]).unwrap());
     }
     let mut trees = HashMap::new();
     for o in &order {
@@ -866,7 +917,46 @@ pub fn union_tree(items: Vec<(u32, Poly)>, objects: &Objects, lo: V3, hi: V3, li
             out.extend(pieces.into_iter().filter(|p| p.verts.len() >= 3 && thick(&p.verts) > 1e-3));
         }
     }
-    best_tree(out, &order, objects, lo, hi, limit)
+    Ok(out)
+}
+
+/// The parts of the cell box's six faces that lie inside the solid ([`Objects::inside_any`]),
+/// facing out of the box: with them the solid in the cell is closed, so its tree is right in
+/// every order, also deep inside a mass whose surfaces are in other cells (a plateau whose top
+/// is in the cell above read as air in the cell below). The faces are cut along the planes of
+/// the cell's surfaces first, so each piece is wholly in or out.
+pub fn box_caps(polys: &[Poly], objects: &Objects, lo: V3, hi: V3, limit: usize) -> Result<Vec<Poly>> {
+    let tree = build_tree(polys.to_vec(), limit)?;
+    let material = polys.first().map_or(0, |p| p.material);
+    let c = |x: usize, y: usize, z: usize| -> V3 { [if x == 1 { hi[0] } else { lo[0] }, if y == 1 { hi[1] } else { lo[1] }, if z == 1 { hi[2] } else { lo[2] }] };
+    // counter-clockwise seen from outside
+    let faces: [([V3; 4], [f64; 3]); 6] = [
+        ([c(0, 0, 0), c(0, 0, 1), c(0, 1, 1), c(0, 1, 0)], [-1.0, 0.0, 0.0]),
+        ([c(1, 0, 0), c(1, 1, 0), c(1, 1, 1), c(1, 0, 1)], [1.0, 0.0, 0.0]),
+        ([c(0, 0, 0), c(1, 0, 0), c(1, 0, 1), c(0, 0, 1)], [0.0, -1.0, 0.0]),
+        ([c(0, 1, 0), c(0, 1, 1), c(1, 1, 1), c(1, 1, 0)], [0.0, 1.0, 0.0]),
+        ([c(0, 0, 0), c(0, 1, 0), c(1, 1, 0), c(1, 0, 0)], [0.0, 0.0, -1.0]),
+        ([c(0, 0, 1), c(1, 0, 1), c(1, 1, 1), c(0, 1, 1)], [0.0, 0.0, 1.0]),
+    ];
+    let mut out = vec![];
+    for (q, n) in faces {
+        // a hair outside the wall, so a point on the wall itself reads solid too
+        let d = -(n[0] * q[0][0] + n[1] * q[0][1] + n[2] * q[0][2]) - 1e-3;
+        let face = Poly { plane: [n[0], n[1], n[2], d], verts: q.to_vec(), material };
+        let mut pieces = vec![];
+        split_by(&tree, 0, face, &mut pieces);
+        for p in pieces {
+            if p.verts.len() < 3 || thick(&p.verts) <= 1e-3 {
+                continue;
+            }
+            let k = p.verts.len() as f64;
+            let m: V3 = std::array::from_fn(|j| p.verts.iter().map(|v| v[j]).sum::<f64>() / k - n[j] * 0.01);
+            if objects.inside_any(m) {
+                out.push(p);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// A solid-leaf tree of an open surface depends on the polygons' order (the
@@ -875,7 +965,7 @@ pub fn union_tree(items: Vec<(u32, Poly)>, objects: &Objects, lo: V3, hi: V3, li
 /// source's, walls first, floors first, the largest first) that agrees best
 /// with [`Objects::inside`] on a 6 x 6 x 6 raster of the cell (the first
 /// that agrees everywhere wins).
-fn best_tree(polys: Vec<Poly>, order: &[u32], objects: &Objects, lo: V3, hi: V3, limit: usize) -> Result<Vec<Node>> {
+fn best_tree(polys: Vec<Poly>, objects: &Objects, lo: V3, hi: V3, limit: usize) -> Result<Vec<Node>> {
     const N: usize = 6;
     let pts: Vec<V3> = (0..N * N * N)
         .map(|i| {
@@ -883,7 +973,7 @@ fn best_tree(polys: Vec<Poly>, order: &[u32], objects: &Objects, lo: V3, hi: V3,
             [f(0, i % N), f(1, i / N % N), f(2, i / (N * N))]
         })
         .collect();
-    let truth: Vec<bool> = pts.iter().map(|p| order.iter().any(|&q| objects.inside(q, *p))).collect();
+    let truth: Vec<bool> = pts.iter().map(|p| objects.inside_any(*p)).collect();
     let score = |t: &[Node]| pts.iter().zip(&truth).filter(|(p, &s)| !t.is_empty() && inside(t, **p) == s || t.is_empty() && !s).count();
     let mut best = build_tree(polys.clone(), limit)?;
     let mut best_score = score(&best);
@@ -982,4 +1072,260 @@ pub fn surface_check(tris: &[ColTri], g: &Grid, n: usize, tol: f64) -> (usize, u
     });
     bad.truncate(8);
     (have, ok, bad)
+}
+
+/// Per source object (mesh node): faces sampled (a few points on each triangle), the samples a
+/// unit in front of a face that the collision calls solid though nothing is there (`phantom`:
+/// the car snags or bounces off air) and a unit behind a face that it calls open though that is
+/// inside the union (`hole`: the car goes through).
+#[derive(Clone, Debug, Default)]
+pub struct FaceStats {
+    pub samples: usize,
+    pub phantom: usize,
+    pub hole: usize,
+    /// Some failing points (point, phantom?).
+    pub worst: Vec<(V3, bool)>,
+}
+
+/// [`FaceStats`] of every source object, by its number (`ColTri.object`).
+pub fn face_check(tris: &[ColTri], g: &Grid) -> std::collections::BTreeMap<u32, FaceStats> {
+    let split = prepare(tris);
+    let objects = Objects::new(&split, g.lo, g.size, g.n[0], g.n[2]);
+    let mut by_col: HashMap<usize, Vec<u32>> = HashMap::new();
+    for (o, c) in objects.cols.keys() {
+        by_col.entry(*c).or_default().push(*o);
+    }
+    let inside_any = |p: V3| {
+        let cx = (((p[0] - g.lo[0]) / g.size[0]).floor().max(0.0) as usize).min(g.n[0] - 1);
+        let cz = (((p[2] - g.lo[2]) / g.size[2]).floor().max(0.0) as usize).min(g.n[2] - 1);
+        by_col.get(&(cx + g.n[0] * cz)).is_some_and(|os| os.iter().any(|&o| objects.inside(o, p)))
+    };
+    let mut out: std::collections::BTreeMap<u32, FaceStats> = Default::default();
+    for t in tris {
+        let Some(pl) = plane_of(&t.p) else { continue };
+        let n = [pl[0], pl[1], pl[2]];
+        let s = out.entry(t.object).or_default();
+        for w in [[1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0], [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]] {
+            let c: V3 = std::array::from_fn(|k| w[0] * t.p[0][k] + w[1] * t.p[1][k] + w[2] * t.p[2][k]);
+            let front = [c[0] + n[0], c[1] + n[1], c[2] + n[2]];
+            let back = [c[0] - n[0], c[1] - n[1], c[2] - n[2]];
+            let in_grid = |p: V3| (0..3).all(|k| p[k] >= g.lo[k] && p[k] < g.hi[k]);
+            if !in_grid(front) || !in_grid(back) {
+                continue;
+            }
+            s.samples += 1;
+            if g.solid(front) && !inside_any(front) {
+                s.phantom += 1;
+                if s.worst.len() < 6 {
+                    s.worst.push((front, true));
+                }
+            }
+            if !g.solid(back) && inside_any(back) {
+                s.hole += 1;
+                if s.worst.len() < 6 {
+                    s.worst.push((back, false));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Inside or not, on an n x n x n raster of every cell: the samples, and those where the
+/// collision disagrees with "under a surface" ([`Objects::inside`] of any object): solid where
+/// nothing is, open inside a solid.
+pub fn volume_check(tris: &[ColTri], g: &Grid, n: usize) -> (usize, usize, usize) {
+    let split = prepare(tris);
+    let objects = Objects::new(&split, g.lo, g.size, g.n[0], g.n[2]);
+    let mut by_col: HashMap<usize, Vec<u32>> = HashMap::new();
+    for (o, c) in objects.cols.keys() {
+        by_col.entry(*c).or_default().push(*o);
+    }
+    let (mut all, mut phantom, mut hole) = (0, 0, 0);
+    for c in &g.cells {
+        let cx = (((c.lo[0] + c.hi[0]) / 2.0 - g.lo[0]) / g.size[0]).floor() as usize;
+        let cz = (((c.lo[2] + c.hi[2]) / 2.0 - g.lo[2]) / g.size[2]).floor() as usize;
+        let os = by_col.get(&(cx + g.n[0] * cz)).cloned().unwrap_or_default();
+        for i in 0..n * n * n {
+            let f = |k: usize, j: usize| c.lo[k] + (c.hi[k] - c.lo[k]) * (j as f64 + 0.37) / n as f64;
+            let p = [f(0, i % n), f(1, i / n % n), f(2, i / (n * n))];
+            let want = os.iter().any(|&o| objects.inside(o, p));
+            let got = !c.tree.is_empty() && inside(&c.tree, p);
+            all += 1;
+            if got && !want {
+                phantom += 1;
+            } else if want && !got {
+                hole += 1;
+            }
+        }
+    }
+    (all, phantom, hole)
+}
+
+/// Walls hanging from the open edges of the floors (an up-facing triangle's edge no other
+/// triangle of its piece shares) down to `bottom`, facing away from the floor. Under a surface
+/// counts as solid ([`Objects::inside`]), so a one-sided deck, a floor whose sides were never
+/// modelled, or the rim of an open terrain stands on solid down to the bottom: but only under
+/// its own footprint. Without them nothing in a cell marks where the footprint ends, and the
+/// deck's plane, the floor under the deck's edge or the air past the world's rim come out on
+/// the wrong side (a deck's solid ran on under the open sky beside it). Two pieces meeting at
+/// a seam that was never welded hang two skirts back to back on one plane: they face each
+/// other and drop out (two solids touching). Collision only: not drawn, no crease edges.
+pub fn skirts(tris: &[ColTri], bottom: f64) -> Vec<ColTri> {
+    let ids = weld(tris, 1e-3);
+    let mut count: HashMap<(u32, usize, usize), u32> = HashMap::new();
+    for (t, v) in tris.iter().zip(&ids) {
+        for k in 0..3 {
+            let (a, b) = (v[k], v[(k + 1) % 3]);
+            *count.entry((t.object, a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    let mut out = vec![];
+    for (t, v) in tris.iter().zip(&ids) {
+        let Some(pl) = plane_of(&t.p) else { continue };
+        if pl[1] < 0.1 {
+            continue;
+        }
+        for k in 0..3 {
+            let (ia, ib) = (v[k], v[(k + 1) % 3]);
+            if count[&(t.object, ia.min(ib), ia.max(ib))] != 1 {
+                continue;
+            }
+            let (a, b, c) = (t.p[k], t.p[(k + 1) % 3], t.p[(k + 2) % 3]);
+            if (a[1].min(b[1])) <= bottom + 1e-3 || ((b[0] - a[0]).powi(2) + (b[2] - a[2]).powi(2)).sqrt() < 1e-3 {
+                continue;
+            }
+            let (ad, bd) = ([a[0], bottom, a[2]], [b[0], bottom, b[2]]);
+            // out: away from the triangle's third corner, across the edge
+            let e = sub(b, a);
+            let mut out_n = [-e[2], 0.0, e[0]];
+            if dot(out_n, sub(c, a)) > 0.0 {
+                out_n = [e[2], 0.0, -e[0]];
+            }
+            let mut q = [a, b, bd, ad];
+            if let Some(p) = plane_of(&q) {
+                if dot([p[0], p[1], p[2]], out_n) < 0.0 {
+                    q = [b, a, ad, bd];
+                }
+            }
+            out.push(ColTri { p: [q[0], q[1], q[2]], material: t.material, object: t.object });
+            out.push(ColTri { p: [q[0], q[2], q[3]], material: t.material, object: t.object });
+        }
+    }
+    out
+}
+
+/// How thick a floating deck becomes ([`solidify_decks`]), and the gap under one that makes it
+/// floating (about a car's height: something can pass under it).
+pub const DECK_THICKNESS: f64 = 4.0;
+pub const DECK_CLEARANCE: f64 = 16.0;
+
+/// The pieces the collision is built from: each mesh node split into its connected pieces
+/// ([`split_components`]), floating one-sided decks made slabs ([`solidify_decks`]).
+pub fn prepare(tris: &[ColTri]) -> Vec<ColTri> {
+    solidify_decks(&split_components(tris))
+}
+
+/// A one-sided floor that floats (a bridge, a walkway, a grate: an open piece of up-facing
+/// triangles only, with another surface more than [`DECK_CLEARANCE`] below most of it) is a
+/// slab [`DECK_THICKNESS`] thick: a bottom under it facing down and walls round its open edges.
+/// Otherwise "under a surface is solid" fills the room beneath it down to the ground. A floor
+/// with the ground right under it (a plate, a decal) or nothing at all below stays as it is.
+pub fn solidify_decks(tris: &[ColTri]) -> Vec<ColTri> {
+    let mut pieces: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, t) in tris.iter().enumerate() {
+        pieces.entry(t.object).or_default().push(i);
+    }
+    let ids = weld(tris, 1e-3);
+    let up = |t: &ColTri| plane_of(&t.p).is_some_and(|p| p[1] > 0.3);
+    // the highest up-facing surface of another piece below a point, by brute force over a
+    // coarse x/z bucketing of the up-facing triangles
+    let cell = 64.0;
+    let mut buckets: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    for (i, t) in tris.iter().enumerate() {
+        if !up(t) {
+            continue;
+        }
+        let (mut x0, mut x1, mut z0, mut z1) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+        for p in &t.p {
+            x0 = x0.min(p[0]);
+            x1 = x1.max(p[0]);
+            z0 = z0.min(p[2]);
+            z1 = z1.max(p[2]);
+        }
+        for bx in (x0 / cell).floor() as i64..=(x1 / cell).floor() as i64 {
+            for bz in (z0 / cell).floor() as i64..=(z1 / cell).floor() as i64 {
+                buckets.entry((bx, bz)).or_default().push(i);
+            }
+        }
+    }
+    let below = |p: V3, own: u32| -> Option<f64> {
+        let list = buckets.get(&((p[0] / cell).floor() as i64, (p[2] / cell).floor() as i64))?;
+        let mut best: Option<f64> = None;
+        for &i in list {
+            let t = &tris[i];
+            if t.object == own {
+                continue;
+            }
+            let [a, b, c] = t.p;
+            let d = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
+            if d.abs() < 1e-12 {
+                continue;
+            }
+            let l1 = ((b[2] - c[2]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[2] - c[2])) / d;
+            let l2 = ((c[2] - a[2]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[2] - c[2])) / d;
+            let l3 = 1.0 - l1 - l2;
+            if l1 < 0.0 || l2 < 0.0 || l3 < 0.0 {
+                continue;
+            }
+            let y = l1 * a[1] + l2 * b[1] + l3 * c[1];
+            if y < p[1] - 1e-3 && best.is_none_or(|b| y > b) {
+                best = Some(y);
+            }
+        }
+        best
+    };
+    let mut out = tris.to_vec();
+    for (&obj, list) in &pieces {
+        if !list.iter().all(|&i| up(&tris[i])) {
+            continue;
+        }
+        let mut count: HashMap<(usize, usize), u32> = HashMap::new();
+        for &i in list {
+            for k in 0..3 {
+                let (a, b) = (ids[i][k], ids[i][(k + 1) % 3]);
+                *count.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+        if count.values().all(|&n| n != 1) {
+            continue;
+        }
+        let floating = list
+            .iter()
+            .filter(|&&i| {
+                let t = &tris[i];
+                let c: V3 = std::array::from_fn(|k| (t.p[0][k] + t.p[1][k] + t.p[2][k]) / 3.0);
+                below(c, obj).is_some_and(|y| c[1] - y > DECK_CLEARANCE)
+            })
+            .count();
+        if floating * 2 <= list.len() {
+            continue;
+        }
+        let down = |p: V3| [p[0], p[1] - DECK_THICKNESS, p[2]];
+        for &i in list {
+            let t = &tris[i];
+            out.push(ColTri { p: [down(t.p[0]), down(t.p[2]), down(t.p[1])], ..t.clone() });
+            for k in 0..3 {
+                let (ia, ib) = (ids[i][k], ids[i][(k + 1) % 3]);
+                if count[&(ia.min(ib), ia.max(ib))] != 1 {
+                    continue;
+                }
+                // the wall under edge a -> b faces out the way the triangle's winding does
+                let (a, b) = (t.p[k], t.p[(k + 1) % 3]);
+                out.push(ColTri { p: [b, a, down(a)], ..t.clone() });
+                out.push(ColTri { p: [b, down(a), down(b)], ..t.clone() });
+            }
+        }
+    }
+    out
 }

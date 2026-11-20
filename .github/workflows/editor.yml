@@ -45,6 +45,12 @@ jobs:
         with:
           path: HWVX-SDL/build-pkg/windows/sdl-prefix
           key: sdl-windows-${{ hashFiles('HWVX-SDL/packaging/SDL_VERSION', 'HWVX-SDL/packaging/build-sdl3.sh', 'HWVX-SDL/cmake/mingw-w64-x86_64.cmake') }}
+      # FFmpeg (HWVX-SDL/packaging/ffmpeg/build.sh), beside the game in the package: rebuilt
+      # only when its script or version changes
+      - uses: actions/cache@v4
+        with:
+          path: HWVX-SDL/build-pkg/windows/ffmpeg-prefix
+          key: ffmpeg-windows-${{ hashFiles('HWVX-SDL/packaging/ffmpeg/build.sh', 'HWVX-SDL/packaging/ffmpeg/FFMPEG_*') }}
       - run: packaging/editor/windows/build.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -72,6 +78,10 @@ jobs:
         with:
           path: HWVX-SDL/build-pkg/macos/sdl-prefix
           key: sdl-macos-${{ hashFiles('HWVX-SDL/packaging/SDL_VERSION', 'HWVX-SDL/packaging/build-sdl3.sh') }}
+      - uses: actions/cache@v4
+        with:
+          path: HWVX-SDL/build-pkg/macos/ffmpeg-prefix
+          key: ffmpeg-macos-${{ hashFiles('HWVX-SDL/packaging/ffmpeg/build.sh', 'HWVX-SDL/packaging/ffmpeg/FFMPEG_*') }}
       - run: packaging/editor/macos/build.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -115,6 +125,10 @@ jobs:
         with:
           path: HWVX-SDL/build-pkg/linux-${{ matrix.arch }}/sdl-prefix
           key: sdl-linux-${{ matrix.arch }}-${{ hashFiles('HWVX-SDL/packaging/SDL_VERSION', 'HWVX-SDL/packaging/build-sdl3.sh') }}
+      - uses: actions/cache@v4
+        with:
+          path: HWVX-SDL/build-pkg/linux-${{ matrix.arch }}/ffmpeg-prefix
+          key: ffmpeg-linux-${{ matrix.arch }}-${{ hashFiles('HWVX-SDL/packaging/ffmpeg/build.sh', 'HWVX-SDL/packaging/ffmpeg/FFMPEG_*') }}
       - run: packaging/editor/linux/build.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -133,14 +147,26 @@ jobs:
         working-directory: .
     steps:
       - run: echo "VER=${GITHUB_REF_NAME#editor-v}" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4      # the HWVX-SDL commit this repository pins
+      - run: echo "SDL_SHA=$(git ls-tree HEAD HWVX-SDL | awk '{print $3}')" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: Alaxend0l/HWVX-SDL
+          ref: ${{ env.SDL_SHA }}
+          path: HWVX-SDL
+          sparse-checkout: packaging/ffmpeg
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           pattern: editor-*
           merge-multiple: true
+      # FFmpeg's source beside the packages that carry its libraries (LGPL), and the
+      # release notes' paragraph on it
+      - run: HWVX-SDL/packaging/ffmpeg/source.sh artifacts "$RUNNER_TEMP/ffmpeg-notes.md"
       - uses: softprops/action-gh-release@v2
         with:
           name: HWVX Editor ${{ env.VER }}
           files: artifacts/*
+          body_path: ${{ runner.temp }}/ffmpeg-notes.md
           generate_release_notes: true
           make_latest: true    # the editor is this repository's release

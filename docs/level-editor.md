@@ -216,15 +216,19 @@ nothing selected it says "Select something in the Level tab's lists, or click it
 
 ### Moving and turning
 
+* **Drag an axis of the gizmo** (the x/y/z lines at the selection: x red, y green, z blue)
+  to move the selection along that axis only. The axis under the pointer turns yellow; a drag
+  that starts anywhere else turns the camera as usual. An axis that points straight at the
+  camera can't be taken: turn the view a little. The gizmo keeps about the same size on screen
+  however far away the camera is.
 * **Ctrl + drag** (Cmd + drag on macOS) in the view moves the selection over the ground under
   the pointer. A volume keeps its height above the ground. Items and effect points find their
   new quadrant by themselves.
+* A drag, of either kind, is one step of **Undo**, however long it lasts.
 * **Ctrl/Cmd + wheel** turns a start, 15° a notch.
 * **To the ground** (inspector) drops the selection straight down onto the collision. For a
   start, it seats the car on the ground (section 5).
 * Or type the numbers in the inspector (`pos/x`, `center x`...).
-
-The x/y/z gizmo shows the axes; you can't drag it (see Limits).
 
 ### The inspector
 
@@ -248,6 +252,21 @@ timer's time), the editor doesn't copy the record. It keeps only the fields you 
 base is kept". **⟲** next to a field takes that patch out, so the field is back to the
 original. Patched records say "(patched)" in the lists, and **Level settings** counts them
 ("1 base record patched").
+
+Patches set every kind of value a base record holds: numbers, enums (a pickup's or a start's
+mode, as a menu), lists of numbers (each its own box; the list is one patch), and the members
+of a position or a turn (`pos/x`, an effect point's `quat/y`). Two kinds can't be patched, and
+show greyed with the base world's value (the reason when you hover it):
+
+* **Links** (what a record points to: a pickup's item kind, a start's AI scripts). Shown with
+  **all fields**.
+* **Numbers the game indexes with**: a volume's `shape` and `type`, a start's `dynamic`, `port`
+  and `maxVehicle`, a timer's `active`, `type` and `countUp`, a variable's `active` and `id`.
+  The game reads them as table positions or record kinds (a timer's three share a word with
+  its on-screen binding), so it never lets a level change them.
+
+A patch the game still refuses when the live preview applies the level (one over what a kept
+base trigger reads) shows under **Live preview** and in red at the field.
 
 ### Texts
 
@@ -546,12 +565,14 @@ new pickups (docs/plans/pickups-and-briefings.md).
 * **Items and effect points** can only go into quadrants that already have some (section 4).
 * **The intro screen's text** is the base level's; your level's text shows as the objective
   line (pause, win and lose screens).
-* **The axis gizmo can't be dragged.** Move with Ctrl/Cmd + drag over the ground, or type the
-  numbers.
 * **The live preview** shows your volumes, timers, variables, texts and patches; your own starts,
   items, effect points and objectives are drawn as marks but only take effect in a test drive (and in the shared level).
 * **Base volumes**: only the sphere airboxes are listed and movable (box volumes aren't).
-* **Patches** change number fields only.
+* **Patches** don't change links (which item a pickup gives, which model an instance shows) or
+  the numbers the game indexes with (a volume's type, a start's port, a timer's count-up): see
+  section 3. Make a record of your own instead where you can (a volume, an item, a start).
+* **The gizmo while the camera spins** (Space) picks from the camera of up to a second ago;
+  stop the spin to drag an axis.
 * **Trigger limits**: the game allows only so many active triggers of each type (your level's
   plus the base ones kept). Going over is a check error; drop base triggers you don't need.
 * **macOS: the game stalls while its window is covered.** With the Metal renderer, a test drive

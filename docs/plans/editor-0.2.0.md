@@ -21,10 +21,11 @@ browser), the gizmo drag and patches beyond numbers, the level limits lifted, th
    on all 51 bases; the user's train and tire were 3 movers). Ship custom worlds marked
    experimental: a base's rules that need what was dropped can't be finished (a challenge base
    has no checkpoints, drag no opponent, battle nobody to fight) until Joyride templates (5).
-5. **Joyride worlds as templates** (the user, 2026-11-20): missions, challenges, battles and drag
-   races made on a Joyride level's world (open-ended, only 10 gears and a key), with "remove the
-   gears and the key" in one step; New level and New track offer them (branch
-   `joyride-templates`, in progress).
+5. ~~Joyride worlds as templates~~: **done** (merged 2026-11-20): any mode on any Joyride world
+   (Challenge on world 4 too), the gears and key removed, and each mode's own screens and flow
+   (the mode's first retail level loaded beside it as data). Retail races unchanged (car logs
+   identical). Follow-ups: world 5's own screen texture, drag results' clock (count-up), a trimmed
+   per-mode screen pack built at conversion time.
 
 ## Suggestions from the user (while trying the editor)
 

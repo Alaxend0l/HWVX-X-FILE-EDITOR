@@ -1,7 +1,7 @@
 # Online: 8 players, and mods
 
 
-Sessions take up to 8 players (NET_PROTOCOL 3) in Battle and Joyride; Drag Race takes 4 at
+Sessions take up to 8 players (NET_PROTOCOL 4: 3, plus the host's battle weapon filter in MSG_SETUP, HWVX-SDL 0.4.2) in Battle and Joyride; Drag Race takes 4 at
 most (the user's decision: its worlds have the retail grid of 4). The host's mode screen
 refuses Drag Race with more than 4 in the lobby and says "Drag Race: 4 players at most";
 players past 4 wait in the lobby. The retail game has 4 player ports; online:

@@ -521,6 +521,13 @@ own)**, then:
 * **jettison**: wildcards are dropped on a reset.
 
 A `round_complete` action ends a round for the player it names. Battle needs at least 2 starts.
+
+**Items in a battle.** Since the game's 0.4.2, Battle Options starts with Gadgets on **Random**:
+every item point then rolls a weapon from its range (the retail points' 0-11, the item
+select's weapons) instead of the item you set, and only among the weapons the player left on
+under Battle Options > **Weapons**. Your items show as placed when the player picks Gadgets
+**On**. In the Level tab, **Random items** (Battle levels only) test-drives it the players' way;
+off, your items as placed.
 Example: flag-run (1 round; the flag volume gives it to player 1, the time-out to player 2).
 
 ### Drag Race

@@ -76,6 +76,7 @@ release's pack. The result, with default settings:
 | Load / Save | slot A's file list straight away | the PC's own file lists | as GameCube |
 | Pause, multi-player | no Save, rows under it moved up | the same, Quit and Exit to Desktop moved | as GameCube |
 | Battle Options, online | no Opponents row | the same | the same |
+| Battle Options (0.4.2) | Gadgets Random and Item Respawn On by default; a **Weapons** row under Score (rows closed up to fit) opening a Weapons screen built from it: the item select's 12 weapons On/Off, six a page, a Page row; random rolls avoid what is off (`Port_BattleItems.c`, `battle.cfg`) | the same | the same |
 
 `mainmenu=original` leaves each release's main menu as its pack has it. What is not there: PC
 Drag Race in Multi-Player (no worlds for it on the CD), and PC split screen for three or four
